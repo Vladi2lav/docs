@@ -197,10 +197,14 @@ function renderRows() {
     });
     tr.querySelector('button').onclick = () => { S.rows.splice(Number(tr.dataset.i), 1); renderRows(); renderPracticeBlocks(); recompute(); };
   });
-  const groups = [...new Set(S.rows.map(r => r.group))];
-  $('prGroup').innerHTML = groups.map(g => `<option>${esc(g)}</option>`).join('');
+  // практику педагог может вести и у группы, где теорию не ведёт: показываем все группы графика, свои — первыми
+  const own = [...new Set(S.rows.map(r => r.group))];
+  const all = S.graph ? Object.values(S.graph.groups).map(g => g.name) : [];
+  const ownKeys = new Set(own.map(normGroup));
+  const rest = all.filter(g => !ownKeys.has(normGroup(g)));
+  $('prGroup').innerHTML = [...own.map(g => `<option>${esc(g)}</option>`), ...rest.map(g => `<option>${esc(g)}</option>`)].join('');
   fillPracticeModules();
-  $('prRow').hidden = !groups.length;
+  $('prRow').hidden = !(S.teacher && S.graph);
   $('trRow').innerHTML = S.rows.filter(r => r.kind === 'theory').map(r => `<option value="${r.id}">${esc(r.name)} (${esc(r.group)})</option>`).join('');
 }
 
