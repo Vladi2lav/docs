@@ -83,3 +83,4 @@ table { border-collapse: collapse; }
 .star { color: #d93025; font-weight: 700; }
 input.need, select.need { border-color: #d93025; background: #fef2f2; }
 #fillReport { margin: 6px 0; font-size: 13px; color: var(--muted); }
+.rows td:nth-child(2) select { width: 130px; }

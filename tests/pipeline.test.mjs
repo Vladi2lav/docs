@@ -20,7 +20,6 @@ import { buildRows, matchSupervisor, teacherNames } from '../src/domain/rows.js'
 import { createCalendar } from '../src/domain/calendar.js';
 import { buildTimesheet } from '../src/domain/timesheet.js';
 import { buildDocx } from '../src/export/docx.js';
-import { resetRow } from '../src/domain/autofill.js';
 import { emptyPracticeRow, graphPeriods } from '../src/domain/rows.js';
 
 const src = name => readFileSync(new URL(`../исходники/${name}`, import.meta.url));
@@ -71,8 +70,8 @@ assert.equal(buildRows({ teacher: 'Зеленин В.А.', entries: schedule.ent
 const calendar = createCalendar({ holidays, state: { overrides: {}, transfers: [] }, workSaturday: false, years: [2025, 2028] });
 const theory = rows[0];
 const transfers = [{ rowId: theory.id, from: '2026-09-01', to: '2026-09-05', hours: 2 }];
-// «Заполнить по документам» возвращает строки к значениям документов; плана в документах нет — он вводится вручную (эталон: 96 / 264)
-rows.forEach(resetRow);
+// эталон Жаксыбаевой: план вводится вручную (96 / 264)
+// плана в документах нет — строки приходят без плана
 assert.ok(rows.every(r => r.plan === null));
 // периоды практики из графика — только по точному индексу модуля группы
 assert.ok(graphPeriods(graph, 'П2А', 'ПМ4').length >= 1);

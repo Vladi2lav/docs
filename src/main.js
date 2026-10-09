@@ -6,7 +6,6 @@ import { parseGraph, guessStartYear, normGroup } from './parsers/graph.js';
 import { PRACTICE_PREFIX } from './config.js';
 import { parseSchedule } from './parsers/schedule.js';
 import { parsePractice } from './parsers/practice.js';
-import { resetRow } from './domain/autofill.js';
 import { buildRows, emptyPracticeRow, graphPeriods, matchSupervisor, teacherNames } from './domain/rows.js';
 import { createCalendar } from './domain/calendar.js';
 import { buildTimesheet } from './domain/timesheet.js';
@@ -168,10 +167,15 @@ function renderRows() {
   const body = $('rowsTable').tBodies[0];
   body.innerHTML = S.rows.map((r, i) => {
     const legend = S.graph && S.graph.legendFor(r.group);
-    const list = legend ? `<datalist id="mods${i}">${Object.values(legend).map(m => `<option value="${esc(m.index)}">${esc(m.title)}</option>`).join('')}</datalist>` : '';
+    const mods = legend ? Object.values(legend) : [];
+    const known = mods.some(m => m.index === r.moduleIndex);
+    const indexCell = legend
+      ? `<select data-f="moduleIndex"><option value="">— без модуля —</option>${r.moduleIndex && !known ? `<option value="${esc(r.moduleIndex)}" selected>${esc(r.moduleIndex)}</option>` : ''}${mods.map(m =>
+          `<option value="${esc(m.index)}"${m.index === r.moduleIndex ? ' selected' : ''}>${esc(m.index)} ${esc(m.title)}</option>`).join('')}</select>`
+      : `<input data-f="moduleIndex" value="${esc(r.moduleIndex)}" placeholder="нет в графике">`;
     return `<tr data-i="${i}">
       <td>${r.kind === 'practice' ? 'практика' : 'теория'}</td>
-      <td><input data-f="moduleIndex" value="${esc(r.moduleIndex)}"${legend ? ` list="mods${i}"` : ''}>${list}</td>
+      <td>${indexCell}</td>
       <td><input data-f="name" value="${esc(r.name)}"></td>
       <td><input data-f="group" value="${esc(r.group)}"></td>
       <td><input data-f="plan" type="number" min="0" value="${r.plan ?? ''}"></td>
@@ -181,20 +185,24 @@ function renderRows() {
   body.querySelectorAll('tr[data-i]').forEach(tr => {
     const row = S.rows[Number(tr.dataset.i)];
     const nameInput = tr.querySelector('[data-f="name"]');
-    tr.querySelectorAll('input').forEach(input => {
+    tr.querySelectorAll('input[data-f]').forEach(input => {
       input.oninput = () => {
         row[input.dataset.f] = input.dataset.f === 'plan' ? (input.value === '' ? null : Number(input.value)) : input.value;
         recompute();
       };
     });
-    // выбрав индекс модуля из подсказки графика, пользователь получает и его полное название
-    tr.querySelector('[data-f="moduleIndex"]').onchange = e => {
-      const mod = S.graph && S.graph.moduleOf(row.group, e.target.value.trim());
-      if (!mod) return;
-      row.name = (row.kind === 'practice' ? PRACTICE_PREFIX : '') + mod.title;
+    // выбор индекса подставляет полное название модуля; «без модуля» возвращает название из документа
+    const indexField = tr.querySelector('[data-f="moduleIndex"]');
+    const onIndex = () => {
+      row.moduleIndex = indexField.value.trim();
+      const mod = row.moduleIndex && S.graph && S.graph.moduleOf(row.group, row.moduleIndex);
+      row.name = mod ? (row.kind === 'practice' ? PRACTICE_PREFIX : '') + mod.title : row.defaults.name;
       nameInput.value = row.name;
       recompute();
     };
+    if (indexField.tagName === 'SELECT') indexField.onchange = onIndex;
+    else indexField.onchange = () => { row.moduleIndex = indexField.value.trim(); recompute(); };
+    indexField.oninput = indexField.tagName === 'SELECT' ? null : () => { row.moduleIndex = indexField.value; recompute(); };
     tr.querySelector('button').onclick = () => { S.rows.splice(Number(tr.dataset.i), 1); renderRows(); renderPracticeBlocks(); recompute(); };
   });
   $('trRow').innerHTML = S.rows.filter(r => r.kind === 'theory').map(r => `<option value="${r.id}">${esc(r.name)} (${esc(r.group)})</option>`).join('');
@@ -216,12 +224,11 @@ function fillAll() {
   if (S.graph.college) $('college').value = S.graph.college;
   if (S.graph.deputy) $('deputy').value = S.graph.deputy;
   if (practiceSpecialty) $('specialty').value = practiceSpecialty;
-  S.rows.forEach(resetRow);
-  renderRows(); renderPracticeBlocks(); recompute();
+  selectTeacher(S.teacher, { keepProfile: true });      // строки собираются заново: возвращаются удалённые, сбрасываются правки
   const empty = document.querySelectorAll('.need').length;
-  $('fillReport').textContent = empty
-    ? `Заполнено из документов. Красным выделено то, чего в документах нет (${empty}) — введите вручную.`
-    : 'Всё заполнено из документов.';
+  const time = new Date().toLocaleTimeString('ru-RU');
+  $('fillReport').textContent = `${time} — пересобрано по документам: дисциплин ${S.rows.length}. ` +
+    (empty ? `Красным выделено то, чего в документах нет (${empty}) — введите вручную.` : 'Всё заполнено.');
 }
 
 // Пустые обязательные поля подсвечиваются красным (заголовки таких полей помечены звёздочкой)
@@ -229,8 +236,12 @@ function markRequired() {
   const ready = !!S.teacher;
   $('teacher').classList.toggle('need', !S.teacher && !!S.schedule);
   for (const id of ['fullName', 'specialty', 'college', 'deputy']) $(id).classList.toggle('need', ready && !$(id).value.trim());
-  $('rowsTable').querySelectorAll('tr[data-i] input').forEach(input => {
-    input.classList.toggle('need', ready && input.value.trim() === '');
+  $('rowsTable').querySelectorAll('tr[data-i]').forEach(tr => {
+    const row = S.rows[Number(tr.dataset.i)];
+    tr.querySelectorAll('input, select').forEach(el => {
+      const optional = el.dataset.f === 'moduleIndex' && row.kind === 'theory';   // у теории (например, физкультура) модуля может не быть
+      el.classList.toggle('need', ready && !optional && el.value.trim() === '');
+    });
   });
   $('practiceBlocks').querySelectorAll('input[data-f="hoursPerDay"]').forEach(input => {
     input.classList.toggle('need', !(Number(input.value) > 0));

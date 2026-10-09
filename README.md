@@ -38,7 +38,7 @@ src/
   config.js           константы и тексты формы
   main.js             состояние и обработчики интерфейса
   parsers/            graph.js · schedule.js · practice.js · timesheet-docx.js   (файл → данные)
-  domain/             rows.js (строки ведомости) · autofill.js · calendar.js · timesheet.js (расчёт по дням/месяцам)
+  domain/             rows.js (строки ведомости) · calendar.js · timesheet.js (расчёт по дням/месяцам)
   export/             docx.js (Word) · docx-package.js (служебные части пакета)
   ui/                 preview.js (ведомость) · graph-view.js (вкладка графика) · calendar-view.js (вкладка календаря)
   util/               dates · sheet (чтение xlsx)
