@@ -6,6 +6,11 @@ import { parseGraph, guessStartYear, normGroup } from './parsers/graph.js';
 import { PRACTICE_PREFIX } from './config.js';
 import { parseSchedule } from './parsers/schedule.js';
 import { parsePractice } from './parsers/practice.js';
+import { parsePrevSemester } from './parsers/prev-semester.js';
+import { applyPrevSemester } from './domain/carryover.js';
+import { annualProblems, buildAnnualEntries, genitiveCollege, groupByLoad } from './domain/annual.js';
+import { buildAnnualDocx } from './export/annual-docx.js';
+import { LOAD_TYPES } from './config.js';
 import { buildRows, emptyPracticeRow, graphPeriods, matchSupervisor, teacherNames } from './domain/rows.js';
 import { createCalendar } from './domain/calendar.js';
 import { buildTimesheet } from './domain/timesheet.js';
@@ -19,13 +24,17 @@ import { deleteWorkspace, getWorkspace, listWorkspaces, putWorkspace, workspaceF
 
 const $ = id => document.getElementById(id);
 const S = {
-  graphSheet: null, graph: null, schedule: null, holidays: null,
+  graphSheet: null, graph: null, schedule: null, holidays: { fixed: [], dates: [] },   // заменяется данными из data/holidays-kz.json
   practices: [],                 // { id, file, data, teacher }
   teacher: '', rows: [], warnings: [],
   transfers: {},                 // педагог → [{ id, rowId, from, to, hours }]
   cal: { overrides: {}, transfers: [], workSaturday: null, swapWeeks: false },   // ручные правки календаря (до обновления страницы)
   result: null, activeMonth: 0,
-  files: { graph: null, schedule: null },   // исходные файлы (имя + содержимое) — нужны для сохранения рабочей области
+  files: { graph: null, schedule: null, prev: null },
+  prev: null,                    // ведомость 1 семестра: ФИО, специальность, строки (план, выполнено, часы по месяцам)
+  extraLoads: {},                // тип нагрузки для строк, которые были только в 1 семестре
+  annual: { fullGen: '', collegeGen: '', notes: {} },
+  entries: [],   // исходные файлы (имя + содержимое) — нужны для сохранения рабочей области
   teacherStates: {},             // педагог → { rows, warnings, fields, semester }: правки, сделанные для каждого педагога
   calStart: null,                // первый месяц, показанный в календаре ({ y, m })
   wsId: null, wsName: '', dirty: false, loading: false, savedAt: null,
@@ -36,7 +45,6 @@ init();
 
 async function init() {
   resetForm();
-  S.holidays = await (await fetch('data/holidays-kz.json')).json();
 
   document.querySelectorAll('#nav button').forEach(b => { b.onclick = () => showTab(b.dataset.tab); });
   $('graphFile').onchange = e => loadGraphFile(e.target.files[0]);
@@ -50,6 +58,10 @@ async function init() {
   $('fillAll').onclick = fillAll;
   $('prAdd').onclick = addPractice;
   $('carry').onchange = recompute;
+  $('prevFile').onchange = e => loadPrevFile(e.target.files[0]);
+  $('fullGen').oninput = () => { S.annual.fullGen = $('fullGen').value; renderAnnual(); };
+  $('collegeGen').oninput = () => { S.annual.collegeGen = $('collegeGen').value; renderAnnual(); };
+  $('annualDownload').onclick = downloadAnnual;
   $('swapWeeks').onclick = () => { S.cal.swapWeeks = !S.cal.swapWeeks;  recompute(); };
   $('download').onclick = download;
   $('trAdd').onclick = addTransfer;
@@ -57,6 +69,7 @@ async function init() {
   $('workSat').onchange = () => { S.cal.workSaturday = $('workSat').checked;  afterCalendarChanged(); };
   $('dtAdd').onclick = addDayTransfer;
   renderDayTransfers();
+  S.holidays = await (await fetch('data/holidays-kz.json')).json();   // обработчики уже подключены; календарь нужен только для расчёта
   initWorkspaces();
 }
 
@@ -214,6 +227,7 @@ function renderRows() {
       <td><input data-f="name" value="${esc(r.name)}"></td>
       <td><input data-f="group" value="${esc(r.group)}"></td>
       <td><input data-f="plan" type="number" min="0" value="${r.plan ?? ''}"></td>
+      <td class="s2"><input data-f="base" type="number" min="0" value="${r.base ?? ''}"></td>
       <td><button type="button" title="Убрать из ведомости">✕</button></td></tr>`;
   }).join('');
 
@@ -222,7 +236,7 @@ function renderRows() {
     const nameInput = tr.querySelector('[data-f="name"]');
     tr.querySelectorAll('input[data-f]').forEach(input => {
       input.oninput = () => {
-        row[input.dataset.f] = input.dataset.f === 'plan' ? (input.value === '' ? null : Number(input.value)) : input.value;
+        row[input.dataset.f] = ['plan', 'base'].includes(input.dataset.f) ? (input.value === '' ? null : Number(input.value)) : input.value;
         recompute();
       };
     });
@@ -270,12 +284,16 @@ function fillAll() {
 function markRequired() {
   const ready = !!S.teacher;
   $('teacher').classList.toggle('need', !S.teacher && !!S.schedule);
+  const sem2 = $('semester').value === '1';
+  $('prevBox').classList.toggle('need', sem2 && !S.prev);
+  $('scheduleBox').classList.toggle('need', sem2 && !!S.schedule?.semester && S.schedule.semester !== 2);
   for (const id of ['fullName', 'specialty', 'college', 'deputy']) $(id).classList.toggle('need', ready && !$(id).value.trim());
   $('rowsTable').querySelectorAll('tr[data-i]').forEach(tr => {
     const row = S.rows[Number(tr.dataset.i)];
     tr.querySelectorAll('input, select').forEach(el => {
       const optional = el.dataset.f === 'moduleIndex' && row.kind === 'theory';   // у теории (например, физкультура) модуля может не быть
-      el.classList.toggle('need', ready && !optional && el.value.trim() === '');
+      const skip = el.dataset.f === 'base' && !sem2;
+      el.classList.toggle('need', ready && !optional && !skip && el.value.trim() === '');
     });
   });
   $('practiceBlocks').querySelectorAll('input[data-f="hoursPerDay"]').forEach(input => {
@@ -402,10 +420,29 @@ function recompute() {
   const period = currentPeriod();
   $('workSat').checked = workSaturday();
 
+  const sem2 = !!period && period.idx === 1;
+  $('prevBox').hidden = !sem2;
+  $('rowsTable').classList.toggle('is-sem1', !sem2);
+  $('rowsTable').classList.toggle('is-sem2', sem2);
+  $('annualWrap').hidden = !sem2;
+  if (sem2 && S.prev) {
+    const found = applyPrevSemester(S.rows, S.prev);          // подставляет только пустые «с 1 сем.» и план
+    $('prevInfo').textContent = `${S.files.prev.name}: сопоставлено строк ${found} из ${S.rows.length}` +
+      (found < S.rows.length ? ' — у остальных выберите тот же индекс модуля, что в ведомости 1 семестра, или введите «С 1 сем.» вручную' : '');
+    // подставленные значения видны в полях таблицы
+    $('rowsTable').querySelectorAll('tr[data-i]').forEach(tr => {
+      const row = S.rows[Number(tr.dataset.i)];
+      for (const f of ['plan', 'base']) {
+        const input = tr.querySelector(`[data-f="${f}"]`);
+        if (input && row[f] != null && input.value === '') input.value = row[f];
+      }
+    });
+  }
+
   if (S.graph && S.rows.length && period) {
     S.result = buildTimesheet({
       rows: S.rows, graph: S.graph, calendar: makeCalendar(), from: period.from, to: period.to,
-      carryOver: $('carry').checked && period.idx === 0, transfers: transfersOf(), swapWeeks: !!S.cal.swapWeeks,
+      carryOver: $('carry').checked && period.idx === 0, transfers: transfersOf(), swapWeeks: !!S.cal.swapWeeks, useBase: sem2,
     });
     $('rowsTable').tBodies[0].querySelectorAll('input[data-f="plan"]').forEach((input, i) => { input.placeholder = `по расписанию ${S.result.totals[i]}`; });
     for (const g of new Set(S.rows.map(r => r.group))) {
@@ -417,8 +454,12 @@ function recompute() {
   if (S.schedule?.semester && period && S.schedule.semester !== period.idx + 1) {
     problems.push(`Загружено расписание ${S.schedule.semester} семестра, а выбран ${period.idx + 1} семестр — часы считаются по загруженному расписанию.`);
   }
+  if (sem2 && S.prev?.fullName && S.teacher && S.prev.fullName.split(/\s+/)[0].toLowerCase() !== S.teacher.split(/\s+/)[0].toLowerCase()) {
+    problems.push(`Ведомость 1 семестра составлена на «${S.prev.fullName}», а выбран педагог «${S.teacher}» — проверьте, тот ли файл.`);
+  }
   showMessage(problems.join('\n'));
   renderTransfers();
+  renderAnnual();
   S.activeMonth = Math.min(S.activeMonth, Math.max(0, (S.result?.sheets.length || 1) - 1));
   refreshPreview();
 }
@@ -574,7 +615,9 @@ function snapshot() {
   return {
     version: 1,
     year: $('year').value,
-    files: { graph: S.files.graph, schedule: S.files.schedule },
+    files: { graph: S.files.graph, schedule: S.files.schedule, prev: S.files.prev },
+    extraLoads: S.extraLoads,
+    annual: S.annual,
     practices: S.practices.map(p => ({ file: p.file, buffer: p.buffer, teacher: p.teacher })),
     teacher: S.teacher,
     teacherStates: S.teacherStates,
@@ -594,6 +637,9 @@ async function applySnapshot(d) {
     for (const p of d.practices || []) await addPracticeBuffer(p.file, p.buffer, p.teacher);
     if (d.files.schedule) await loadScheduleBuffer(d.files.schedule.name, d.files.schedule.buffer);
     S.teacherStates = d.teacherStates || {};
+    S.extraLoads = d.extraLoads || {};
+    S.annual = d.annual || { fullGen: '', collegeGen: '', notes: {} };
+    if (d.files.prev) await loadPrevBuffer(d.files.prev.name, d.files.prev.buffer);
     S.transfers = d.transfers || {};
     S.cal = d.cal || S.cal;
     S.calStart = d.calStart || null;
@@ -701,4 +747,89 @@ async function initWorkspaces() {
   }
   S.dirty = false;
   updateSaveState();
+}
+
+// ───────── 2 семестр: ведомость 1 семестра ─────────
+
+async function loadPrevFile(file) {
+  if (file) await loadPrevBuffer(file.name, await file.arrayBuffer());
+}
+
+async function loadPrevBuffer(name, buffer) {
+  try {
+    S.prev = await parsePrevSemester(JSZip, buffer);
+    S.files.prev = { name, buffer };
+    $('prevInfo').textContent = `${name}: ${S.prev.fullName || 'без ФИО'}, строк: ${S.prev.rows.length}`;
+    $('prevInfo').className = 'hint ok';
+    if (!$('fullName').value && S.prev.fullName) $('fullName').value = S.prev.fullName;
+    if (!$('specialty').value && S.prev.specialty) $('specialty').value = S.prev.specialty;
+    recompute();
+  } catch (e) { S.prev = null; S.files.prev = null; $('prevInfo').textContent = e.message; $('prevInfo').className = 'hint'; recompute(); }
+}
+
+// ───────── годовой учёт часов ─────────
+
+function annualMeta() {
+  return {
+    yearLabel: S.graph ? `${S.graph.startYear}-${S.graph.startYear + 1}` : '',
+    fullGen: S.annual.fullGen.trim(), collegeGen: S.annual.collegeGen.trim(),
+    shortName: S.teacher, notes: S.annual.notes,
+  };
+}
+
+function renderAnnual() {
+  if ($('annualWrap').hidden || !S.result || !S.prev) {
+    if (!$('annualWrap').hidden) { $('annualTable').tBodies[0].innerHTML = ''; $('annualMissing').textContent = 'Загрузите ведомость 1 семестра (блок 2) — без неё годовой учёт собрать нельзя.'; $('annualDownload').disabled = true; }
+    return;
+  }
+  const period = currentPeriod();
+  S.entries = buildAnnualEntries({ rows: S.rows, sheets: S.result.sheets, prev: S.prev, sem2Start: period.from, extraLoads: S.extraLoads });
+  if (!S.annual.collegeGen && $('college').value) { S.annual.collegeGen = genitiveCollege($('college').value); }
+  if ($('collegeGen') !== document.activeElement) $('collegeGen').value = S.annual.collegeGen;
+  if ($('fullGen') !== document.activeElement) $('fullGen').value = S.annual.fullGen;
+
+  const body = $('annualTable').tBodies[0];
+  body.innerHTML = S.entries.map((e, i) => `<tr data-i="${i}">
+    <td>${e.kind === 'practice' ? 'практика' : 'теория'}${e.ref ? '' : ' <small>(только 1 сем.)</small>'}</td>
+    <td>${esc(e.group)}</td><td>${esc(e.name)}</td>
+    <td><select><option value="">— выбрать —</option>${LOAD_TYPES.map(t => `<option value="${t.key}"${t.key === e.load ? ' selected' : ''}>${esc(t.option)}</option>`).join('')}</select></td>
+    <td>${e.plan ?? ''}</td><td>${e.fact}</td></tr>`).join('');
+  body.querySelectorAll('tr').forEach(tr => {
+    const e = S.entries[Number(tr.dataset.i)];
+    const select = tr.querySelector('select');
+    select.classList.toggle('need', !select.value);
+    select.onchange = () => {
+      if (e.ref) e.ref.load = select.value; else S.extraLoads[e.key] = select.value;
+      markDirty();
+      renderAnnual();
+    };
+  });
+
+  // причина невыполнения — обязательна, если по типу нагрузки часов не добрано
+  $('annualNotes').innerHTML = groupByLoad(S.entries).filter(g => g.notDone > 0).map(g => `<div class="noteline">
+    <span>${esc(g.type.label)}: не выполнено ${g.notDone} ч — причина${STARHTML}</span>
+    <input data-type="${g.type.key}" value="${esc(S.annual.notes[g.type.key] || '')}" placeholder="например: командировка"></div>`).join('');
+  $('annualNotes').querySelectorAll('input').forEach(input => {
+    input.classList.toggle('need', !input.value.trim());
+    input.oninput = () => { S.annual.notes[input.dataset.type] = input.value; input.classList.toggle('need', !input.value.trim()); markDirty(); renderAnnualStatus(); };
+  });
+  $('fullGen').classList.toggle('need', !S.annual.fullGen.trim());
+  $('collegeGen').classList.toggle('need', !S.annual.collegeGen.trim());
+  renderAnnualStatus();
+}
+
+const STARHTML = ' <b class="star">*</b>';
+
+function renderAnnualStatus() {
+  const problems = annualProblems(S.entries, { fullGen: S.annual.fullGen, collegeGen: S.annual.collegeGen, notes: S.annual.notes });
+  $('fullGen').classList.toggle('need', !S.annual.fullGen.trim());
+  $('collegeGen').classList.toggle('need', !S.annual.collegeGen.trim());
+  $('annualDownload').disabled = problems.length > 0;
+  $('annualMissing').textContent = problems.length ? `Чтобы скачать, заполните: ${problems.slice(0, 6).join('; ')}${problems.length > 6 ? ` … и ещё ${problems.length - 6}` : ''}.` : 'Всё заполнено — документ можно скачать.';
+}
+
+async function downloadAnnual() {
+  const blob = await buildAnnualDocx(JSZip, S.entries, annualMeta());
+  const y = S.graph.startYear;
+  download_(blob, `Годовой_учет_${String(y).slice(2)}-${String(y + 1).slice(2)}_${S.teacher.split(/\s+/)[0]}.docx`);
 }

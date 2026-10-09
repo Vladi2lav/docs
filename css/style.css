@@ -95,3 +95,10 @@ input.need, select.need { border-color: #d93025; background: #fef2f2; }
 dialog { border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; width: min(560px, 92vw); }
 dialog::backdrop { background: #0006; }
 dialog h2 { margin-top: 0; }
+
+.rows.is-sem1 .s2 { display: none; }
+.file.need, .prevbox.need { border-color: #d93025; background: #fef2f2; }
+.prevbox { border: 1px dashed var(--line); border-radius: 8px; padding: 6px 8px; }
+#annualMissing { margin-top: 6px; color: var(--warn); }
+.noteline { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.noteline input { flex: 1; min-width: 220px; }

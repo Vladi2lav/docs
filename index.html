@@ -33,7 +33,7 @@
       <div class="files">
         <label class="file"><b>График учебного процесса</b> <small>.xlsx</small>
           <input type="file" id="graphFile" accept=".xlsx,.xls"><em id="graphInfo">не загружен</em></label>
-        <label class="file"><b>Расписание занятий</b> <small>.xlsx</small>
+        <label class="file" id="scheduleBox"><b>Расписание занятий</b> <small>.xlsx</small>
           <input type="file" id="scheduleFile" accept=".xlsx,.xls"><em id="scheduleInfo">не загружено</em></label>
         <label class="file"><b>Расписание практики</b> <small>.docx, необязательно</small>
           <input type="file" id="practiceFile" accept=".docx" multiple><em>&nbsp;</em></label>
@@ -53,6 +53,9 @@
         <label>Семестр <b class="star">*</b>
           <select id="semester"><option value="0">1 семестр</option><option value="1">2 семестр</option></select>
           <small id="period" class="hint"></small></label>
+        <label id="prevBox" class="prevbox" hidden>Ведомость 1 семестра (Word) <b class="star">*</b>
+          <input type="file" id="prevFile" accept=".docx">
+          <small id="prevInfo" class="hint">нужна для остатков: выполнено с начала года, план, ФИО, специальность</small></label>
       </div>
       <div class="row"><button type="button" id="fillAll" class="primary">Заполнить всё по документам</button>
         <span class="hint">подставляет только то, что есть в документах</span></div>
@@ -81,7 +84,7 @@
       <h2><span>3</span> Дисциплины, практика, переносы</h2>
       <p class="hint">Поля со звёздочкой обязательны, пустые подсвечены красным. Индекс модуля обязателен только для практики.</p>
       <div class="scroll"><table class="rows" id="rowsTable"><thead><tr>
-        <th>Тип</th><th>Индекс модуля</th><th>Наименование <b class="star">*</b></th><th>Группа <b class="star">*</b></th><th>План, ч <b class="star">*</b></th><th></th></tr></thead><tbody></tbody></table></div>
+        <th>Тип</th><th>Индекс модуля</th><th>Наименование <b class="star">*</b></th><th>Группа <b class="star">*</b></th><th>План, ч <b class="star">*</b></th><th class="s2">С 1 сем., ч <b class="star">*</b></th><th></th></tr></thead><tbody></tbody></table></div>
 
       <h3>Практика</h3>
       
@@ -105,6 +108,23 @@
       <div class="row"><button type="button" id="download" class="primary">Скачать Word (.docx)</button></div>
       <div id="tabs" class="tabs"></div>
       <div id="preview"><p class="hint">Предпросмотр появится, когда загружены график и расписание и выбран педагог.</p></div>
+    </section>
+  </div>
+
+  <!-- ═════════ Годовой учёт часов (во 2 семестре) ═════════ -->
+  <div id="annualWrap" hidden>
+    <section class="card" id="annualCard">
+      <h2><span>5</span> Годовой учёт часов</h2>
+      <p class="hint">Годовая форма по типам нагрузки: сентябрь–июнь (1 семестр — из загруженной ведомости, 2 семестр — расчёт). Документ можно скачать, когда все поля заполнены.</p>
+      <div class="grid2">
+        <label>ФИО в родительном падеже <b class="star">*</b><input id="fullGen" placeholder="Жаксыбаевой Натальи Николаевны"></label>
+        <label>Колледж в родительном падеже <b class="star">*</b><input id="collegeGen"></label>
+      </div>
+      <div class="scroll"><table class="rows" id="annualTable"><thead><tr>
+        <th>Тип</th><th>Группа</th><th>Наименование</th><th>Нагрузка <b class="star">*</b></th><th>План, ч</th><th>Выполнено, ч</th></tr></thead><tbody></tbody></table></div>
+      <div id="annualNotes"></div>
+      <div class="row"><button type="button" id="annualDownload" class="primary">Скачать годовой учёт (Word)</button></div>
+      <div id="annualMissing" class="hint"></div>
     </section>
   </div>
 

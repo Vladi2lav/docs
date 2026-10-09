@@ -21,6 +21,10 @@ import { createCalendar } from '../src/domain/calendar.js';
 import { buildTimesheet } from '../src/domain/timesheet.js';
 import { buildDocx } from '../src/export/docx.js';
 import { workspaceFromJson, workspaceToJson } from '../src/util/workspaces.js';
+import { parsePrevSemester } from '../src/parsers/prev-semester.js';
+import { applyPrevSemester } from '../src/domain/carryover.js';
+import { annualProblems, buildAnnualEntries, genitiveCollege, groupByLoad } from '../src/domain/annual.js';
+import { buildAnnualDocx } from '../src/export/annual-docx.js';
 import { emptyPracticeRow, graphPeriods } from '../src/domain/rows.js';
 
 const src = name => readFileSync(new URL(`../исходники/${name}`, import.meta.url));
@@ -104,5 +108,31 @@ const original = new Uint8Array(70000).map((_, i) => i % 251).buffer;
 const restored = workspaceFromJson(workspaceToJson({ id: 'x', name: 'тест', updatedAt: 1, data: { files: { graph: { name: 'g.xlsx', buffer: original } } } }));
 assert.deepEqual(new Uint8Array(restored.data.files.graph.buffer), new Uint8Array(original));
 assert.throws(() => workspaceFromJson('{"a":1}'));
+
+// ───── 2 семестр и годовой учёт: ведомость 1 семестра (сгенерированная выше) → остатки → годовая форма
+const prev = await parsePrevSemester(JSZip, Buffer.from(await blob.arrayBuffer()));
+assert.equal(prev.fullName, 'Жаксыбаева Наталья Николаевна');
+assert.equal(prev.rows.length, 2);
+assert.deepEqual(prev.rows.map(r => r.plan), [96, 264]);
+assert.equal(prev.rows[0].months[8], 28);                         // сентябрь, часы по месяцам читаются из таблиц
+const rows2 = buildRows({ teacher, entries: schedule.entries, graph, practiceDocs }).rows;
+rows2[0].name = prev.rows[0].name; rows2[1].name = prev.rows[1].name;         // выбор модуля пользователем → название совпало
+assert.equal(applyPrevSemester(rows2, prev), 2);
+assert.deepEqual(rows2.map(r => r.base), [prev.rows[0].cumulative, prev.rows[1].cumulative]);
+const sem2 = buildTimesheet({ rows: rows2, graph, calendar, from: sems[1].from, to: sems[1].to, carryOver: false, useBase: true });
+assert.equal(sem2.sheets[0].rows[0].cumulative, prev.rows[0].cumulative + sem2.sheets[0].rows[0].total);   // накопление продолжается с 1 семестра
+const noPrev = buildRows({ teacher, entries: schedule.entries, graph, practiceDocs }).rows;
+assert.equal(buildTimesheet({ rows: noPrev, graph, calendar, from: sems[1].from, to: sems[1].to, carryOver: false, useBase: true }).sheets[0].rows[0].cumulative, '');   // без данных 1 семестра — пусто, не выдумывается
+rows2.forEach(r => { r.load = 'grant'; });
+const entries = buildAnnualEntries({ rows: rows2, sheets: sem2.sheets, prev, sem2Start: sems[1].from });
+const annualMeta = { fullGen: 'Жаксыбаевой Натальи Николаевны', collegeGen: genitiveCollege(graph.college), notes: { grant: 'командировка' }, yearLabel: '2026-2027', shortName: teacher };
+assert.equal(genitiveCollege('Центральноазиатский технико-экономический колледж'), 'Центральноазиатского технико-экономического колледжа');
+assert.equal(groupByLoad(entries).length, 1);
+assert.ok(annualProblems(entries.map(e => ({ ...e, load: '' })), annualMeta).some(p => p.startsWith('тип нагрузки')));
+const missingNote = annualProblems(entries, { ...annualMeta, notes: {} });
+assert.ok(groupByLoad(entries)[0].notDone > 0 ? missingNote.some(p => p.startsWith('причина')) : true);
+assert.deepEqual(annualProblems(entries, annualMeta), []);
+const annual = await buildAnnualDocx(JSZip, entries, annualMeta);
+writeFileSync(new URL('../tests/out/annual.docx', import.meta.url), Buffer.from(await annual.arrayBuffer()));
 
 console.log('OK, месяцев в документе:', sheets.length);

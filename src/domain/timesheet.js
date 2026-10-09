@@ -5,9 +5,10 @@ import { CARRY_NOTE, FILL, HOURS_PER_PAIR, MONTH_NAMES, VACATION_CODE } from '..
 import { daysInMonth, iso, monthsBetween, ruDate, weekday, ymIndex, ymOf } from '../util/dates.js';
 
 // transfers: [{ rowId, from, to, hours }] — занятие за дату `from` проведено (отработано) в дату `to`
-export function buildTimesheet({ rows, graph, calendar, from, to, carryOver, transfers = [], swapWeeks = false }) {
+export function buildTimesheet({ rows, graph, calendar, from, to, carryOver, transfers = [], swapWeeks = false, useBase = false }) {
   const graphStart = ymOf(graph.weeks[0].start);
-  const first = ymIndex(from) < ymIndex(graphStart) ? from : graphStart;   // накопительный итог — с начала графика
+  // 1 семестр: накопительный итог — с начала графика; 2 семестр (useBase): с выполненного в 1 семестре (row.base)
+  const first = useBase || ymIndex(from) < ymIndex(graphStart) ? from : graphStart;
   // Считаем до конца графика: план по умолчанию = все часы года, тогда в конце семестра виден остаток «на 2 сем»
   const graphEnd = ymOf(graph.weeks[graph.weeks.length - 1].end);
   const lastMonth = ymIndex(to) > ymIndex(graphEnd) ? to : graphEnd;
@@ -47,7 +48,8 @@ export function buildTimesheet({ rows, graph, calendar, from, to, carryOver, tra
 
   const totals = rows.map((_, i) => sum(months.flatMap(mo => mo.cells[i].map(c => c.hours))));   // справка: все часы по расписанию
   const planned = rows.map(row => row.plan);                                                     // null — план не задан
-  const cumulative = rows.map(() => 0);
+  const cumulative = rows.map(r => (useBase ? Number(r.base) || 0 : 0));
+  const hasBase = rows.map(r => !useBase || (r.base != null && r.base !== ''));
   const sheets = [];
 
   months.forEach(mo => {
@@ -55,7 +57,7 @@ export function buildTimesheet({ rows, graph, calendar, from, to, carryOver, tra
     const sheetRows = rows.map((row, i) => {
       const total = sum(mo.cells[i].map(c => c.hours));
       cumulative[i] += total;
-      const remaining = planned[i] === null ? null : planned[i] - cumulative[i];
+      const remaining = planned[i] === null || !hasBase[i] ? null : planned[i] - cumulative[i];
       const carry = carryOver && isLast && remaining > 0;
       return {
         moduleIndex: row.moduleIndex,
@@ -64,7 +66,7 @@ export function buildTimesheet({ rows, graph, calendar, from, to, carryOver, tra
         cells: mo.cells[i].map(c => ({ text: c.label || (c.hours > 0 ? String(c.hours) : ''), fill: c.fill || null, vertical: !!c.label })),
         total,
         plan: planned[i] ?? '',
-        cumulative: cumulative[i],
+        cumulative: hasBase[i] ? cumulative[i] : '',
         remainingText: remaining === null ? '' : (carry ? `${remaining} (${CARRY_NOTE})` : String(remaining)),
         remainingFill: carry ? FILL.mark : null,
       };
@@ -87,7 +89,7 @@ export function buildTimesheet({ rows, graph, calendar, from, to, carryOver, tra
     rows.forEach((_, i) => {
       const lastActive = sheets.filter(sh => sh.rows[i].total > 0).pop();
       const r = lastActive && lastActive.rows[i];
-      const remaining = r && r.plan !== '' ? r.plan - r.cumulative : 0;
+      const remaining = r && r.plan !== '' && r.cumulative !== '' ? r.plan - r.cumulative : 0;
       if (remaining > 0) { r.remainingText = `${remaining} (${CARRY_NOTE})`; r.remainingFill = FILL.mark; }
     });
   }
