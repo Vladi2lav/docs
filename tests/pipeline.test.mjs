@@ -20,6 +20,7 @@ import { buildRows, matchSupervisor, teacherNames } from '../src/domain/rows.js'
 import { createCalendar } from '../src/domain/calendar.js';
 import { buildTimesheet } from '../src/domain/timesheet.js';
 import { buildDocx } from '../src/export/docx.js';
+import { workspaceFromJson, workspaceToJson } from '../src/util/workspaces.js';
 import { emptyPracticeRow, graphPeriods } from '../src/domain/rows.js';
 
 const src = name => readFileSync(new URL(`../исходники/${name}`, import.meta.url));
@@ -98,4 +99,10 @@ const blob = await buildDocx(JSZip, {
 }, sheets);
 mkdirSync(new URL('../tests/out/', import.meta.url), { recursive: true });
 writeFileSync(new URL('../tests/out/result.docx', import.meta.url), Buffer.from(await blob.arrayBuffer()));
+// файл рабочей области: двоичные данные переживают выгрузку/загрузку
+const original = new Uint8Array(70000).map((_, i) => i % 251).buffer;
+const restored = workspaceFromJson(workspaceToJson({ id: 'x', name: 'тест', updatedAt: 1, data: { files: { graph: { name: 'g.xlsx', buffer: original } } } }));
+assert.deepEqual(new Uint8Array(restored.data.files.graph.buffer), new Uint8Array(original));
+assert.throws(() => workspaceFromJson('{"a":1}'));
+
 console.log('OK, месяцев в документе:', sheets.length);

@@ -10,7 +10,14 @@
 </head>
 <body>
 <header>
-  <h1>Учёт времени педагога</h1>
+  <div class="topbar">
+    <h1>Учёт времени педагога</h1>
+    <div class="ws">
+      <button type="button" id="wsBtn" title="Рабочие области">📁 <span id="wsName">Без названия</span> ▾</button>
+      <span id="saveState" class="savestate clean">Нет изменений</span>
+      <button type="button" id="saveBtn" class="primary" title="Ctrl+S">Сохранить</button>
+    </div>
+  </div>
   <nav id="nav">
     <button type="button" data-tab="sheet" class="on">Ведомость</button>
     <button type="button" data-tab="graph">График учебного процесса</button>
@@ -120,7 +127,12 @@
         утверждает Правительство, и свои дни добавляйте здесь: клик по дню — сделать нерабочим / рабочим, либо форма переноса ниже.
         Правки запоминаются в браузере и сразу влияют на ведомость.</p>
       <div class="row">
+        <button type="button" id="calPrev">◀ −1 год</button>
+        <label class="inline">С месяца <input type="month" id="calStart"></label>
+        <button type="button" id="calNext">+1 год ▶</button>
         <label class="inline"><input type="checkbox" id="workSat"> Суббота — учебный день</label>
+        <button type="button" id="calExport">Выгрузить календарь</button>
+        <label class="filebtn">Загрузить календарь<input type="file" id="calImport" accept=".json" hidden></label>
       </div>
       <div class="row">
         <b>Перенос дня:</b>
@@ -135,6 +147,17 @@
     </section>
   </div>
 </main>
+
+<dialog id="wsDialog">
+  <h2>Рабочие области</h2>
+  <p class="hint">Сохраняют загруженные файлы и все правки. Чтобы продолжить на другом устройстве: «В файл» — и загрузите файл там.</p>
+  <ul id="wsList" class="list"></ul>
+  <div class="row">
+    <button type="button" id="wsNew">Новая область</button>
+    <label class="filebtn">Загрузить из файла<input type="file" id="wsImport" accept=".json" hidden></label>
+    <button type="button" id="wsClose">Закрыть</button>
+  </div>
+</dialog>
 
 <script type="module" src="src/main.js"></script>
 </body>

@@ -15,6 +15,7 @@ import { renderGraph, highlightSet } from './ui/graph-view.js';
 import { renderCalendar } from './ui/calendar-view.js';
 import { ruDate, weekday, ymOf } from './util/dates.js';
 import { MONTH_NAMES } from './config.js';
+import { deleteWorkspace, getWorkspace, listWorkspaces, putWorkspace, workspaceFromJson, workspaceToJson } from './util/workspaces.js';
 
 const $ = id => document.getElementById(id);
 const S = {
@@ -24,7 +25,12 @@ const S = {
   transfers: {},                 // педагог → [{ id, rowId, from, to, hours }]
   cal: { overrides: {}, transfers: [], workSaturday: null, swapWeeks: false },   // ручные правки календаря (до обновления страницы)
   result: null, activeMonth: 0,
+  files: { graph: null, schedule: null },   // исходные файлы (имя + содержимое) — нужны для сохранения рабочей области
+  teacherStates: {},             // педагог → { rows, warnings, fields, semester }: правки, сделанные для каждого педагога
+  calStart: null,                // первый месяц, показанный в календаре ({ y, m })
+  wsId: null, wsName: '', dirty: false, loading: false, savedAt: null,
 };
+const FIELD_IDS = ['fullName', 'specialty', 'dept', 'cmk', 'position'];
 
 init();
 
@@ -51,6 +57,7 @@ async function init() {
   $('workSat').onchange = () => { S.cal.workSaturday = $('workSat').checked;  afterCalendarChanged(); };
   $('dtAdd').onclick = addDayTransfer;
   renderDayTransfers();
+  initWorkspaces();
 }
 
 // После обновления страницы всё начинается с чистого листа (браузер иначе подставляет прежние значения полей)
@@ -73,12 +80,16 @@ function showTab(name) {
 // ───────── загрузка документов ─────────
 
 async function loadGraphFile(file) {
-  if (!file) return;
+  if (file) await loadGraphBuffer(file.name, await file.arrayBuffer());
+}
+
+async function loadGraphBuffer(name, buffer) {
   try {
-    S.graphSheet = readSheet(XLSX, await file.arrayBuffer());
-    const guessed = guessStartYear(file.name);
-    if (guessed) $('year').value = guessed;
-    $('graphInfo').dataset.name = file.name;
+    S.graphSheet = readSheet(XLSX, buffer);
+    S.files.graph = { name, buffer };
+    const guessed = guessStartYear(name);
+    if (guessed && !S.loading) $('year').value = guessed;
+    $('graphInfo').dataset.name = name;
     reparseGraph();
   } catch (e) { fail('graphInfo', e); }
 }
@@ -98,11 +109,15 @@ function reparseGraph() {
 }
 
 async function loadScheduleFile(file) {
-  if (!file) return;
+  if (file) await loadScheduleBuffer(file.name, await file.arrayBuffer());
+}
+
+async function loadScheduleBuffer(name, buffer) {
   try {
-    S.schedule = parseSchedule(readSheet(XLSX, await file.arrayBuffer()));
-    S.schedule.semester ||= Number(/([12])\s*сем/i.exec(file.name)?.[1] || 0);
-    $('scheduleInfo').textContent = `${file.name}: ${S.schedule.groups.length} групп, ${teacherNames(S.schedule.entries).length} педагогов`;
+    S.schedule = parseSchedule(readSheet(XLSX, buffer));
+    S.files.schedule = { name, buffer };
+    S.schedule.semester ||= Number(/([12])\s*сем/i.exec(name)?.[1] || 0);
+    $('scheduleInfo').textContent = `${name}: ${S.schedule.groups.length} групп, ${teacherNames(S.schedule.entries).length} педагогов`;
     $('scheduleInfo').className = 'ok';
     $('teacher').innerHTML = '<option value="">— выберите педагога —</option>' +
       teacherNames(S.schedule.entries).map(n => `<option>${esc(n)}</option>`).join('');
@@ -112,13 +127,15 @@ async function loadScheduleFile(file) {
 }
 
 async function loadPracticeFiles(files) {
-  for (const file of files) {
-    try {
-      const data = await parsePractice(JSZip, await file.arrayBuffer());
-      S.practices.push({ id: `${Date.now()}${S.practices.length}`, file: file.name, data, teacher: '' });
-    } catch (e) { showMessage(`${file.name}: ${e.message}`, true); }
-  }
+  for (const file of files) await addPracticeBuffer(file.name, await file.arrayBuffer(), '');
   afterInputsChanged();
+}
+
+async function addPracticeBuffer(file, buffer, teacher) {
+  try {
+    const data = await parsePractice(JSZip, buffer);
+    S.practices.push({ id: `${Date.now()}${S.practices.length}`, file, buffer, data, teacher });
+  } catch (e) { showMessage(`${file}: ${e.message}`, true); }
 }
 
 function afterInputsChanged() {
@@ -127,7 +144,7 @@ function afterInputsChanged() {
     for (const p of S.practices) if (!p.teacher) p.teacher = matchSupervisor(names, p.data.supervisor) || '';
   }
   renderPractices();
-  if (S.teacher) selectTeacher(S.teacher, { keepProfile: true });
+  if (S.teacher) selectTeacher(S.teacher, { fresh: true, keepFields: true });   // документы изменились — строки собираются заново
   else { recompute(); }
 }
 
@@ -146,16 +163,34 @@ function renderPractices() {
 
 // ───────── педагог и строки ведомости ─────────
 
-function selectTeacher(name, { keepProfile = false } = {}) {
+function stashTeacher() {
+  if (!S.teacher) return;
+  S.teacherStates[S.teacher] = {
+    rows: S.rows, warnings: S.warnings, semester: $('semester').value,
+    fields: Object.fromEntries(FIELD_IDS.map(id => [id, $(id).value])),
+  };
+}
+
+// fresh — собрать строки заново из документов; keepFields — не очищать введённые поля
+function selectTeacher(name, { fresh = false, keepFields = false } = {}) {
+  stashTeacher();
+  if (fresh) delete S.teacherStates[name];
   S.teacher = name;
   $('teacher').value = name;
   S.rows = []; S.warnings = [];
   if (name && S.graph && S.schedule) {
-    const practiceDocs = S.practices.filter(p => p.teacher === name).map(p => p.data);
-    ({ rows: S.rows, warnings: S.warnings } = buildRows({ teacher: name, entries: S.schedule.entries, graph: S.graph, practiceDocs }));
-    if (!keepProfile) {
-      for (const id of ['fullName', 'specialty', 'dept', 'cmk', 'position']) $(id).value = '';
-      $('semester').value = '0';
+    const saved = S.teacherStates[name];
+    if (saved) {
+      ({ rows: S.rows, warnings: S.warnings } = saved);
+      FIELD_IDS.forEach(id => { $(id).value = saved.fields[id] ?? ''; });
+      $('semester').value = saved.semester;
+    } else {
+      const practiceDocs = S.practices.filter(p => p.teacher === name).map(p => p.data);
+      ({ rows: S.rows, warnings: S.warnings } = buildRows({ teacher: name, entries: S.schedule.entries, graph: S.graph, practiceDocs }));
+      if (!keepFields) {
+        FIELD_IDS.forEach(id => { $(id).value = ''; });
+        $('semester').value = '0';
+      }
     }
   }
   renderRows();
@@ -224,7 +259,7 @@ function fillAll() {
   if (S.graph.college) $('college').value = S.graph.college;
   if (S.graph.deputy) $('deputy').value = S.graph.deputy;
   if (practiceSpecialty) $('specialty').value = practiceSpecialty;
-  selectTeacher(S.teacher, { keepProfile: true });      // строки собираются заново: возвращаются удалённые, сбрасываются правки
+  selectTeacher(S.teacher, { fresh: true, keepFields: true });      // строки собираются заново: возвращаются удалённые, сбрасываются правки
   const empty = document.querySelectorAll('.need').length;
   const time = new Date().toLocaleTimeString('ru-RU');
   $('fillReport').textContent = `${time} — пересобрано по документам: дисциплин ${S.rows.length}. ` +
@@ -335,10 +370,16 @@ const workSaturday = () => {
   return !!(S.schedule && S.schedule.hasSaturday) || practiceSat;
 };
 
+// Годы, для которых строятся праздники: всё, что встречается в данных, с запасом
+function calendarYears() {
+  const ys = [new Date().getFullYear(), S.calStart?.y, S.graph?.startYear, ...Object.keys(S.cal.overrides).map(d => Number(d.slice(0, 4)))].filter(Boolean);
+  return [Math.min(...ys) - 1, Math.max(...ys) + 2];
+}
+
 function makeCalendar() {
   return createCalendar({
     holidays: S.holidays, state: S.cal, workSaturday: workSaturday(),
-    years: S.graph ? [S.graph.startYear - 1, S.graph.startYear + 2] : [2025, 2028],
+    years: calendarYears(),
   });
 }
 
@@ -355,6 +396,7 @@ function currentPeriod() {
 }
 
 function recompute() {
+  markDirty();
   S.result = null;
   const problems = [...S.warnings];
   const period = currentPeriod();
@@ -426,21 +468,53 @@ function renderGraphTab() {
 
 // ───────── вкладка «Календарь» ─────────
 
+function calendarStart() {
+  return S.calStart || (S.graph ? ymOf(S.graph.weeks[0].start) : { y: new Date().getFullYear(), m: 0 });
+}
+
 function renderCalendarTab() {
   const calendar = makeCalendar();
+  const start = calendarStart();
   $('workSat').checked = workSaturday();
-  if (!S.graph) {
-    $('calendarView').innerHTML = '<p class="hint">Загрузите график учебного процесса на вкладке «Ведомость»: по нему определяется учебный год.</p>';
-    return;
-  }
+  $('calStart').value = `${start.y}-${String(start.m + 1).padStart(2, '0')}`;
   renderCalendar($('calendarView'), {
-    first: ymOf(S.graph.weeks[0].start), calendar,
+    first: start, calendar,
     onToggle(date) {
       if (S.cal.overrides[date]) delete S.cal.overrides[date];
       else S.cal.overrides[date] = calendar.dayOff(date) ? { type: 'work' } : { type: 'off', name: 'Нерабочий день' };
       afterCalendarChanged();
     },
   });
+}
+
+function shiftCalendar(months) {
+  const s = calendarStart();
+  const i = s.y * 12 + s.m + months;
+  S.calStart = { y: Math.floor(i / 12), m: i % 12 };
+  markDirty();
+  renderCalendarTab();
+}
+
+// Выгрузка/загрузка календаря: свои праздники, рабочие дни и переносы одним файлом, независимо от графика
+function exportCalendar() {
+  const data = { type: 'calendar', version: 1, overrides: S.cal.overrides, transfers: S.cal.transfers, workSaturday: S.cal.workSaturday };
+  download_(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), 'календарь-рабочих-дней.json');
+}
+
+async function importCalendar(file) {
+  if (!file) return;
+  try {
+    const d = JSON.parse(await file.text());
+    if (d.type !== 'calendar' || typeof d.overrides !== 'object' || !Array.isArray(d.transfers)) throw new Error('Это не файл календаря');
+    S.cal = { ...S.cal, overrides: d.overrides, transfers: d.transfers, workSaturday: d.workSaturday ?? null };
+    afterCalendarChanged();
+  } catch (e) { showMessage(`Календарь не загружен: ${e.message}`, true); }
+}
+
+function download_(blob, name) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
 }
 
 function addDayTransfer() {
@@ -478,4 +552,153 @@ function fail(infoId, error) {
   $(infoId).textContent = 'ошибка';
   $(infoId).className = '';
   showMessage(error.message, true);
+}
+
+// ───────── рабочие области: сохранение хода работы ─────────
+
+function markDirty() {
+  if (S.loading) return;
+  S.dirty = true;
+  updateSaveState();
+}
+
+function updateSaveState() {
+  const el = $('saveState');
+  el.className = `savestate ${S.dirty ? 'dirty' : 'clean'}`;
+  el.textContent = S.dirty ? '● Не сохранено' : (S.savedAt ? `✓ Сохранено ${new Date(S.savedAt).toLocaleTimeString('ru-RU')}` : 'Нет изменений');
+  $('wsName').textContent = S.wsName || 'Без названия';
+}
+
+function snapshot() {
+  stashTeacher();
+  return {
+    version: 1,
+    year: $('year').value,
+    files: { graph: S.files.graph, schedule: S.files.schedule },
+    practices: S.practices.map(p => ({ file: p.file, buffer: p.buffer, teacher: p.teacher })),
+    teacher: S.teacher,
+    teacherStates: S.teacherStates,
+    transfers: S.transfers,
+    cal: S.cal,
+    calStart: S.calStart,
+    global: { college: $('college').value, deputy: $('deputy').value, carry: $('carry').checked },
+  };
+}
+
+async function applySnapshot(d) {
+  S.loading = true;
+  try {
+    $('year').value = d.year || '';
+    if (d.files.graph) await loadGraphBuffer(d.files.graph.name, d.files.graph.buffer);
+    S.practices = [];
+    for (const p of d.practices || []) await addPracticeBuffer(p.file, p.buffer, p.teacher);
+    if (d.files.schedule) await loadScheduleBuffer(d.files.schedule.name, d.files.schedule.buffer);
+    S.teacherStates = d.teacherStates || {};
+    S.transfers = d.transfers || {};
+    S.cal = d.cal || S.cal;
+    S.calStart = d.calStart || null;
+    $('college').value = d.global?.college ?? '';
+    $('deputy').value = d.global?.deputy ?? '';
+    $('carry').checked = d.global?.carry ?? true;
+    renderDayTransfers();
+    if (d.teacher) selectTeacher(d.teacher); else recompute();
+  } finally { S.loading = false; }
+}
+
+async function saveWorkspace() {
+  if (!S.wsId) {
+    const suggested = `${S.teacher ? S.teacher.split(/\s+/)[0] : 'Ведомость'} ${S.graph ? `${S.graph.startYear}/${S.graph.startYear + 1}` : ''}`.trim();
+    const name = prompt('Название рабочей области', suggested);
+    if (!name) return;
+    S.wsId = crypto.randomUUID();
+    S.wsName = name.trim();
+  }
+  try {
+    const updatedAt = Date.now();
+    await putWorkspace({ id: S.wsId, name: S.wsName, updatedAt, data: snapshot() });
+    S.dirty = false;
+    S.savedAt = updatedAt;
+    history.replaceState(null, '', `#ws=${S.wsId}`);
+    updateSaveState();
+  } catch (e) { showMessage(`Не удалось сохранить: ${e.message}`, true); }
+}
+
+function leaveConfirmed() {
+  return !S.dirty || confirm('Есть несохранённые изменения. Продолжить без сохранения?');
+}
+
+function openWorkspace(id) {
+  if (!leaveConfirmed()) return;
+  S.dirty = false;
+  location.hash = `#ws=${id}`;
+  location.reload();
+}
+
+async function renderWorkspaceList() {
+  let items = [];
+  try { items = await listWorkspaces(); } catch (e) { $('wsList').innerHTML = `<li>${esc(e.message)}</li>`; return; }
+  $('wsList').innerHTML = items.length ? items.map(w => `<li data-id="${w.id}">
+    <span class="grow"><b>${esc(w.name)}</b>${w.id === S.wsId ? ' <em>(открыта)</em>' : ''}<br><small>${new Date(w.updatedAt).toLocaleString('ru-RU')}</small></span>
+    <button type="button" data-act="open">Открыть</button>
+    <button type="button" data-act="file" title="Скачать файл для переноса на другое устройство">В файл</button>
+    <button type="button" data-act="del" title="Удалить">✕</button></li>`).join('')
+    : '<li>Сохранённых рабочих областей пока нет.</li>';
+
+  $('wsList').querySelectorAll('li[data-id]').forEach(li => {
+    const id = li.dataset.id;
+    li.querySelector('[data-act="open"]').onclick = () => openWorkspace(id);
+    li.querySelector('[data-act="file"]').onclick = async () => {
+      const ws = await getWorkspace(id);
+      download_(new Blob([workspaceToJson(ws)], { type: 'application/json' }), `${ws.name}.workspace.json`);
+    };
+    li.querySelector('[data-act="del"]').onclick = async () => {
+      if (!confirm('Удалить рабочую область безвозвратно?')) return;
+      await deleteWorkspace(id);
+      if (id === S.wsId) { S.wsId = null; S.wsName = ''; S.dirty = true; history.replaceState(null, '', location.pathname); updateSaveState(); }
+      renderWorkspaceList();
+    };
+  });
+}
+
+async function importWorkspaceFile(file) {
+  if (!file) return;
+  try {
+    const ws = workspaceFromJson(await file.text());
+    const id = crypto.randomUUID();
+    await putWorkspace({ ...ws, id, name: `${ws.name} (из файла)`, updatedAt: Date.now() });
+    openWorkspace(id);
+  } catch (e) { showMessage(`Файл не загружен: ${e.message}`, true); }
+}
+
+async function initWorkspaces() {
+  $('wsBtn').onclick = () => { renderWorkspaceList(); $('wsDialog').showModal(); };
+  $('wsClose').onclick = () => $('wsDialog').close();
+  $('wsNew').onclick = () => { if (!leaveConfirmed()) return; S.dirty = false; history.replaceState(null, '', location.pathname); location.reload(); };
+  $('wsImport').onchange = e => importWorkspaceFile(e.target.files[0]);
+  $('saveBtn').onclick = saveWorkspace;
+  $('calExport').onclick = exportCalendar;
+  $('calImport').onchange = e => { importCalendar(e.target.files[0]); e.target.value = ''; };
+  $('calStart').onchange = e => {
+    const m = /^(\d{4})-(\d{2})$/.exec(e.target.value);
+    if (m) { S.calStart = { y: Number(m[1]), m: Number(m[2]) - 1 }; markDirty(); renderCalendarTab(); }
+  };
+  $('calPrev').onclick = () => shiftCalendar(-12);
+  $('calNext').onclick = () => shiftCalendar(12);
+
+  for (const type of ['input', 'change']) document.addEventListener(type, e => { if (!e.target.closest('dialog')) markDirty(); });
+  document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveWorkspace(); } });
+  window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+  const id = /#ws=([\w-]+)/.exec(location.hash)?.[1];
+  if (id) {
+    try {
+      const ws = await getWorkspace(id);
+      if (!ws) throw new Error('рабочая область не найдена в этом браузере — загрузите её из файла');
+      S.wsId = ws.id; S.wsName = ws.name;
+      await applySnapshot(ws.data);
+      S.dirty = false; S.savedAt = ws.updatedAt;
+    } catch (e) { showMessage(`Рабочая область не открыта: ${e.message}`, true); }
+  }
+  S.dirty = false;
+  updateSaveState();
 }

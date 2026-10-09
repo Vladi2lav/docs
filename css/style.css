@@ -84,3 +84,14 @@ table { border-collapse: collapse; }
 input.need, select.need { border-color: #d93025; background: #fef2f2; }
 #fillReport { margin: 6px 0; font-size: 13px; color: var(--muted); }
 .rows td:nth-child(2) select { width: 130px; }
+
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.topbar h1 { margin: 0; }
+.ws { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.savestate { font-size: 13px; padding: 2px 8px; border-radius: 10px; }
+.savestate.dirty { background: #fde68a; color: #7c4a03; }
+.savestate.clean { background: #ffffff1f; color: #cfe8d5; }
+.filebtn { display: inline-block; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--text); cursor: pointer; font-size: 14px; }
+dialog { border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; width: min(560px, 92vw); }
+dialog::backdrop { background: #0006; }
+dialog h2 { margin-top: 0; }
