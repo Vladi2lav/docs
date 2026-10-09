@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Учёт времени педагога — Форма №130</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>Учёт времени педагога</h1>
+  <nav id="nav">
+    <button type="button" data-tab="sheet" class="on">Ведомость</button>
+    <button type="button" data-tab="graph">График учебного процесса</button>
+    <button type="button" data-tab="calendar">Календарь рабочих дней</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ═════════ Ведомость ═════════ -->
+  <div id="tab-sheet" class="tab">
+    <section class="card">
+      <h2><span>1</span> Исходные документы</h2>
+      <div class="files">
+        <label class="file"><b>График учебного процесса</b> <small>.xlsx</small>
+          <input type="file" id="graphFile" accept=".xlsx,.xls"><em id="graphInfo">не загружен</em></label>
+        <label class="file"><b>Расписание занятий</b> <small>.xlsx</small>
+          <input type="file" id="scheduleFile" accept=".xlsx,.xls"><em id="scheduleInfo">не загружено</em></label>
+        <label class="file"><b>Расписание практики</b> <small>.docx, необязательно</small>
+          <input type="file" id="practiceFile" accept=".docx" multiple><em>&nbsp;</em></label>
+      </div>
+      <div class="row">
+        <label class="inline">Учебный год начинается в <input type="number" id="year" min="2000" max="2100" placeholder="2026"></label>
+        <span class="hint">определяется по имени файла графика, иначе укажите вручную</span>
+      </div>
+      <ul id="practiceList" class="list"></ul>
+      <div id="messages"></div>
+    </section>
+
+    <section class="card">
+      <h2><span>2</span> Педагог, семестр, реквизиты</h2>
+      <div class="grid2">
+        <label>Педагог (из расписания)<select id="teacher"><option value="">— загрузите график и расписание —</option></select></label>
+        <label>Семестр
+          <select id="semester"><option value="0">1 семестр</option><option value="1">2 семестр</option></select>
+          <small id="period" class="hint"></small></label>
+      </div>
+      <div class="row"><button type="button" id="fillAll" class="primary">Заполнить всё по документам</button>
+        <span class="hint">только то, что прямо указано в документах; чего не хватило — перечислено ниже</span></div>
+      <div id="fillReport"></div>
+      <div class="grid2">
+        <label>Фамилия, имя, отчество полностью<input id="fullName" placeholder="Иванов Иван Иванович"></label>
+        <label>Заместитель по учебной работе (подпись)<input id="deputy" placeholder="Н. Иванова"></label>
+        <label class="wide">Специальность (Квалификация)
+          <input id="specialty" list="specialties" placeholder="06130100 Программное обеспечение (по видам), 4S06130103 …">
+          <datalist id="specialties"></datalist></label>
+        <label class="wide">Колледж (название в кавычках)<input id="college"></label>
+        <label>Отделение <small class="hint">необязательно</small><input id="dept"></label>
+        <label>Комиссия (ЦМК) <small class="hint">необязательно</small><input id="cmk"></label>
+        <label>Должность / категория <small class="hint">необязательно</small><input id="position"></label>
+      </div>
+      <div class="row">
+        <button type="button" id="swapWeeks"></button>
+        <span class="hint">неделя №1 графика берёт колонку расписания, указанную слева; если у вас наоборот — нажмите</span>
+      </div>
+      <div class="row">
+        <label class="inline"><input type="checkbox" id="carry" checked> В последнем месяце 1 семестра помечать остаток «ост на 2 сем»</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><span>3</span> Дисциплины, практика, переносы</h2>
+      <p class="hint">Индекс модуля, название и план часов можно поправить. Пустой план = все часы периода (остаток 0).</p>
+      <div class="scroll"><table class="rows" id="rowsTable"><thead><tr>
+        <th>Тип</th><th>Индекс</th><th>Наименование</th><th>Группа</th><th>План, ч</th><th></th></tr></thead><tbody></tbody></table></div>
+
+      <h3>Практика</h3>
+      <p class="hint">Практика автоматически добавляется только из docx, где указан руководитель. Остальное добавляете сами кнопкой ниже.</p>
+      <div id="practiceBlocks"></div>
+      <div class="row" id="prRow" hidden>
+        <select id="prGroup"></select>
+        <select id="prModule"></select>
+        <button type="button" id="prAdd">+ Практика по графику</button>
+        <span class="hint">модуль выбираете вы; периоды — недели графика с его кодом; часы в день введите сами</span>
+      </div>
+
+      <h3>Переносы и отработки занятий</h3>
+      <div class="row">
+        <select id="trRow"></select>
+        <label class="inline">занятие за <input type="date" id="trFrom"></label>
+        <label class="inline">проведено <input type="date" id="trTo"></label>
+        <label class="inline">часов <input type="number" id="trHours" min="1" value="2" style="width:70px"></label>
+        <button type="button" id="trAdd">Добавить</button>
+      </div>
+      <ul id="trList" class="list"></ul>
+      <div id="missed"></div>
+    </section>
+
+    <section class="card">
+      <h2><span>4</span> Результат</h2>
+      <div class="row"><button type="button" id="download" class="primary">Скачать Word (.docx)</button></div>
+      <div id="tabs" class="tabs"></div>
+      <div id="preview"><p class="hint">Предпросмотр появится, когда загружены график и расписание и выбран педагог.</p></div>
+    </section>
+  </div>
+
+  <!-- ═════════ График учебного процесса ═════════ -->
+  <div id="tab-graph" class="tab" hidden>
+    <section class="card">
+      <div class="row">
+        <input id="graphQuery" placeholder="Поиск группы…">
+        <label class="inline"><input type="checkbox" id="graphMine"> только группы выбранного педагога</label>
+      </div>
+      <div id="graphView"><p class="hint">Загрузите график учебного процесса на вкладке «Ведомость».</p></div>
+    </section>
+  </div>
+
+  <!-- ═════════ Календарь рабочих дней ═════════ -->
+  <div id="tab-calendar" class="tab" hidden>
+    <section class="card">
+      <p class="hint"><b>Откуда берутся нерабочие дни:</b> воскресенье (и суббота при пятидневке) + государственные праздники РК из файла
+        <code>data/holidays-kz.json</code> (праздник на выходной переносится на ближайший рабочий день). Официальные переносы, которые каждый год
+        утверждает Правительство, и свои дни добавляйте здесь: клик по дню — сделать нерабочим / рабочим, либо форма переноса ниже.
+        Правки запоминаются в браузере и сразу влияют на ведомость.</p>
+      <div class="row">
+        <label class="inline"><input type="checkbox" id="workSat"> Суббота — учебный день</label>
+      </div>
+      <div class="row">
+        <b>Перенос дня:</b>
+        <label class="inline">выходной с <input type="date" id="dtFrom"></label>
+        <label class="inline">на <input type="date" id="dtTo"></label>
+        <input id="dtName" placeholder="Название (необязательно)">
+        <button type="button" id="dtAdd">Добавить перенос</button>
+      </div>
+      <ul id="dtList" class="list"></ul>
+      <p class="legend"><i class="weekend"></i> выходной <i class="holiday"></i> праздник <i class="custom"></i> нерабочий (ваша правка) <i class="work-manual"></i> рабочий (ваша правка)</p>
+      <div id="calendarView"></div>
+    </section>
+  </div>
+</main>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

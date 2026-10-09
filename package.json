@@ -1,0 +1,17 @@
+{
+  "name": "teacher-timesheet",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/pipeline.test.mjs",
+    "start": "node server.js"
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "0.8.10",
+    "jszip": "3.10.1",
+    "xlsx": "0.18.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
