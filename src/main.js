@@ -2,12 +2,12 @@
 // Вся предметная логика лежит в parsers/, domain/, export/; здесь — состояние и обработчики интерфейса.
 
 import { readSheet } from './util/sheet.js';
-import { parseGraph, guessStartYear, normGroup, familyOf } from './parsers/graph.js';
+import { parseGraph, guessStartYear, normGroup } from './parsers/graph.js';
 import { PRACTICE_PREFIX } from './config.js';
 import { parseSchedule } from './parsers/schedule.js';
 import { parsePractice } from './parsers/practice.js';
-import { fillRow } from './domain/autofill.js';
-import { buildRows, makePracticeRow, matchSupervisor, teacherNames } from './domain/rows.js';
+import { resetRow } from './domain/autofill.js';
+import { buildRows, emptyPracticeRow, graphPeriods, matchSupervisor, teacherNames } from './domain/rows.js';
 import { createCalendar } from './domain/calendar.js';
 import { buildTimesheet } from './domain/timesheet.js';
 import { buildDocx } from './export/docx.js';
@@ -21,7 +21,7 @@ const $ = id => document.getElementById(id);
 const S = {
   graphSheet: null, graph: null, schedule: null, holidays: null,
   practices: [],                 // { id, file, data, teacher }
-  teacher: '', rows: [], warnings: [], rowReports: {},
+  teacher: '', rows: [], warnings: [],
   transfers: {},                 // педагог → [{ id, rowId, from, to, hours }]
   cal: { overrides: {}, transfers: [], workSaturday: null, swapWeeks: false },   // ручные правки календаря (до обновления страницы)
   result: null, activeMonth: 0,
@@ -43,8 +43,7 @@ async function init() {
   $('fullName').oninput = () => { $('fullName').classList.remove('bad'); refreshPreview(); };
   for (const id of ['specialty', 'college', 'deputy', 'dept', 'cmk', 'position']) $(id).oninput = refreshPreview;
   $('fillAll').onclick = fillAll;
-  $('prGroup').onchange = fillPracticeModules;
-  $('prAdd').onclick = addPracticeFromGraph;
+  $('prAdd').onclick = addPractice;
   $('carry').onchange = recompute;
   $('swapWeeks').onclick = () => { S.cal.swapWeeks = !S.cal.swapWeeks;  recompute(); };
   $('download').onclick = download;
@@ -158,7 +157,6 @@ function selectTeacher(name, { keepProfile = false } = {}) {
     if (!keepProfile) {
       for (const id of ['fullName', 'specialty', 'dept', 'cmk', 'position']) $(id).value = '';
       $('semester').value = '0';
-      S.rowReports = {};
     }
   }
   renderRows();
@@ -169,158 +167,97 @@ function selectTeacher(name, { keepProfile = false } = {}) {
 function renderRows() {
   const body = $('rowsTable').tBodies[0];
   body.innerHTML = S.rows.map((r, i) => {
-    const rep = S.rowReports[r.id];
-    const status = rep ? [...rep.filled.map(t => `<span class="ok">✓ ${esc(t)}</span>`), ...rep.missing.map(t => `<span class="warn">⚠ ${esc(t)}</span>`)].join('<br>') : '';
-    return `<tr class="head" data-h="${i}"><td colspan="6"><b>${esc(r.moduleIndex || 'модуль не выбран')} · ${r.kind === 'practice' ? 'практика' : 'теория'} · ${esc(r.group)}</b>
-        <button type="button" data-fill>Заполнить по документам</button>
-        <select data-module>${moduleOptions(r)}</select>${status ? `<div class="status">${status}</div>` : ''}</td></tr>
-      <tr data-i="${i}">
-        <td>${r.kind === 'practice' ? 'практика' : 'теория'}</td>
-        <td><input data-f="moduleIndex" value="${esc(r.moduleIndex)}"></td>
-        <td><input data-f="name" value="${esc(r.name)}"></td>
-        <td><input data-f="group" value="${esc(r.group)}"></td>
-        <td><input data-f="plan" type="number" min="0" value="${r.plan ?? ''}"></td>
-        <td><button type="button" title="Убрать из ведомости">✕</button></td></tr>`;
+    const legend = S.graph && S.graph.legendFor(r.group);
+    const list = legend ? `<datalist id="mods${i}">${Object.values(legend).map(m => `<option value="${esc(m.index)}">${esc(m.title)}</option>`).join('')}</datalist>` : '';
+    return `<tr data-i="${i}">
+      <td>${r.kind === 'practice' ? 'практика' : 'теория'}</td>
+      <td><input data-f="moduleIndex" value="${esc(r.moduleIndex)}"${legend ? ` list="mods${i}"` : ''}>${list}</td>
+      <td><input data-f="name" value="${esc(r.name)}"></td>
+      <td><input data-f="group" value="${esc(r.group)}"></td>
+      <td><input data-f="plan" type="number" min="0" value="${r.plan ?? ''}"></td>
+      <td><button type="button" title="Убрать из ведомости">✕</button></td></tr>`;
   }).join('');
 
-  body.querySelectorAll('tr.head').forEach(tr => {
-    tr.querySelector('[data-fill]').onclick = () => fillOneRow(Number(tr.dataset.h));
-    tr.querySelector('[data-module]').onchange = e => pickModule(Number(tr.dataset.h), e.target.value);
-  });
   body.querySelectorAll('tr[data-i]').forEach(tr => {
     const row = S.rows[Number(tr.dataset.i)];
+    const nameInput = tr.querySelector('[data-f="name"]');
     tr.querySelectorAll('input').forEach(input => {
       input.oninput = () => {
         row[input.dataset.f] = input.dataset.f === 'plan' ? (input.value === '' ? null : Number(input.value)) : input.value;
         recompute();
       };
     });
+    // выбрав индекс модуля из подсказки графика, пользователь получает и его полное название
+    tr.querySelector('[data-f="moduleIndex"]').onchange = e => {
+      const mod = S.graph && S.graph.moduleOf(row.group, e.target.value.trim());
+      if (!mod) return;
+      row.name = (row.kind === 'practice' ? PRACTICE_PREFIX : '') + mod.title;
+      nameInput.value = row.name;
+      recompute();
+    };
     tr.querySelector('button').onclick = () => { S.rows.splice(Number(tr.dataset.i), 1); renderRows(); renderPracticeBlocks(); recompute(); };
   });
-  // практику педагог может вести и у группы, где теорию не ведёт: показываем все группы графика, свои — первыми
-  const own = [...new Set(S.rows.map(r => r.group))];
-  const all = S.graph ? Object.values(S.graph.groups).map(g => g.name) : [];
-  const ownKeys = new Set(own.map(normGroup));
-  const rest = all.filter(g => !ownKeys.has(normGroup(g)));
-  $('prGroup').innerHTML = [...own.map(g => `<option>${esc(g)}</option>`), ...rest.map(g => `<option>${esc(g)}</option>`)].join('');
-  fillPracticeModules();
-  $('prRow').hidden = !(S.teacher && S.graph);
   $('trRow').innerHTML = S.rows.filter(r => r.kind === 'theory').map(r => `<option value="${r.id}">${esc(r.name)} (${esc(r.group)})</option>`).join('');
+  $('prAdd').disabled = !(S.teacher && S.graph);
 }
 
-// ───────── выбор модуля из «Обозначений» графика (вручную, без догадок) ─────────
+// ───────── практика, «Заполнить всё по документам», подсветка обязательных полей ─────────
 
-// Модули всех «семейств» графика; семейство группы строки идёт первым и отмечено
-function moduleOptions(row) {
-  if (!S.graph) return '<option value="">модуль из графика…</option>';
-  const fam = familyOf(row.group);
-  const mods = S.graph.legendModules();
-  const groups = [...new Set(mods.map(m => m.family))].sort((a, b) => (b === fam) - (a === fam));
-  return '<option value="">Модуль из графика — выбрать…</option>' + groups.map(f =>
-    `<optgroup label="${esc(f)}${f === fam ? ' — семейство группы ' + esc(row.group) : ''}">${mods.filter(m => m.family === f).map(m =>
-      `<option value="${esc(f)}|${esc(m.code)}"${row.moduleRef === `${f}|${m.code}` ? ' selected' : ''}>${esc(m.index)} ${esc(m.title)}</option>`).join('')}</optgroup>`).join('');
-}
-
-function pickModule(i, value) {
-  const row = S.rows[i];
-  const [family, code] = value.split('|');
-  const mod = value && S.graph.legend[family] && S.graph.legend[family][code];
-  if (!mod) return;
-  row.moduleRef = value;
-  row.moduleIndex = mod.index;
-  row.name = row.kind === 'practice' ? PRACTICE_PREFIX + mod.title : mod.title;
-  renderRows(); renderPracticeBlocks(); recompute();
-}
-
-function fillPracticeModules() {
-  const group = $('prGroup').value;
-  const legend = S.graph && group ? S.graph.legendFor(group) : null;
-  $('prModule').innerHTML = legend
-    ? Object.entries(legend).map(([code, m]) => `<option value="${esc(code)}">${esc(m.index)} ${esc(m.title)}</option>`).join('')
-    : '<option value="">в графике нет «Обозначений» для этой группы</option>';
-  $('prAdd').disabled = !legend;
-}
-
-function addPracticeFromGraph() {
-  const group = $('prGroup').value;
-  const code = $('prModule').value;
-  const legend = S.graph && S.graph.legendFor(group);
-  if (!legend || !legend[code]) return;
-  const module = { code, ...legend[code] };
-  const row = makePracticeRow({ id: `p${Date.now()}`, group, module, graph: S.graph });
-  if (!row.blocks.length) { showMessage(`В графике у группы ${group} нет недель с кодом «${code}» (${module.index}).`, true); return; }
-  S.rows.push(row);
-  renderRows(); renderPracticeBlocks(); recompute();
-}
-
-// ───────── «Заполнить по документам» ─────────
-
-function fillOneRow(i) {
-  const row = S.rows[i];
-  S.rowReports[row.id] = fillRow(row, { graph: S.graph });
+function addPractice() {
+  const group = S.rows[0]?.group || Object.values(S.graph.groups)[0]?.name || '';
+  S.rows.push(emptyPracticeRow({ id: `p${Date.now()}`, group, start: S.graph.weeks[0].start }));
   renderRows(); renderPracticeBlocks(); recompute();
 }
 
 function fillAll() {
-  const ok = [];
-  const bad = [];
-  if (!S.graph || !S.schedule) {
-    bad.push(`${!S.graph ? 'график учебного процесса' : 'расписание занятий'} не загружен (шаг 1) — без него заполнять нечего`);
-    return showReport(ok, bad);
-  }
-
-  if (!S.teacher) {
-    bad.push('педагог: не выбран — выберите в списке (блок 2), затем нажмите кнопку снова');
-    return showReport(ok, bad);
-  }
-
+  if (!S.graph || !S.schedule) { $('fillReport').textContent = 'Сначала загрузите график и расписание (шаг 1).'; return; }
+  if (!S.teacher) { $('teacher').classList.add('need'); $('teacher').focus(); $('fillReport').textContent = 'Выберите педагога.'; return; }
   const practiceSpecialty = S.practices.filter(p => p.teacher === S.teacher).map(p => p.data.specialty).find(Boolean);
-  const attrs = [
-    ['fullName', 'ФИО полностью', '', 'в расписании только фамилия с инициалами — введите полное ФИО в блоке 2'],
-    ['specialty', 'специальность', practiceSpecialty,
-      `в графике специальности не привязаны к группам (вариантов: ${S.graph.specialties.length}), в docx практики её нет — выберите в поле «Специальность» (блок 2)`],
-    ['college', 'название колледжа', S.graph.college, 'в графике не найдена строка «Учреждение образования «…»» — введите в блоке 2'],
-    ['deputy', 'подпись зам. директора', S.graph.deputy, 'в графике нет строки «Заместитель директора по учебной работе … Фамилия» — введите в блоке 2'],
-  ];
-  for (const [id, label, value, hint] of attrs) {
-    if (value) { $(id).value = value; ok.push(`${label}: ${value}`); } else bad.push(`${label}: ${hint}`);
-  }
-
-  S.rows.forEach(row => {
-    const r = fillRow(row, { graph: S.graph });
-    S.rowReports[row.id] = r;
-    r.missing.forEach(t => bad.push(`${row.moduleIndex || 'дисциплина'} ${row.group} (${row.kind === 'practice' ? 'практика' : 'теория'}): ${t}`));
-  });
-  ok.push(`дисциплин заполнено по документам: ${S.rows.length}`);
+  if (S.graph.college) $('college').value = S.graph.college;
+  if (S.graph.deputy) $('deputy').value = S.graph.deputy;
+  if (practiceSpecialty) $('specialty').value = practiceSpecialty;
+  S.rows.forEach(resetRow);
   renderRows(); renderPracticeBlocks(); recompute();
-  showReport(ok, bad);
+  const empty = document.querySelectorAll('.need').length;
+  $('fillReport').textContent = empty
+    ? `Заполнено из документов. Красным выделено то, чего в документах нет (${empty}) — введите вручную.`
+    : 'Всё заполнено из документов.';
 }
 
-function showReport(ok, bad) {
-  $('fillReport').innerHTML = [...ok.map(t => `<p class="okline">✓ ${esc(t)}</p>`), ...bad.map(t => `<p class="warnline">⚠ Не хватает — ${esc(t)}</p>`)].join('');
+// Пустые обязательные поля подсвечиваются красным (заголовки таких полей помечены звёздочкой)
+function markRequired() {
+  const ready = !!S.teacher;
+  $('teacher').classList.toggle('need', !S.teacher && !!S.schedule);
+  for (const id of ['fullName', 'specialty', 'college', 'deputy']) $(id).classList.toggle('need', ready && !$(id).value.trim());
+  $('rowsTable').querySelectorAll('tr[data-i] input').forEach(input => {
+    input.classList.toggle('need', ready && input.value.trim() === '');
+  });
+  $('practiceBlocks').querySelectorAll('input[data-f="hoursPerDay"]').forEach(input => {
+    input.classList.toggle('need', !(Number(input.value) > 0));
+  });
 }
 
-// Блоки практики: период × часов в день (из графика) либо точные часы по датам (из docx)
+// Блоки практики: период × часов в день либо точные часы по датам (из docx)
 function renderPracticeBlocks() {
   const rows = S.rows.filter(r => r.kind === 'practice');
-  $('practiceBlocks').innerHTML = rows.length ? rows.map(r => `<div class="block" data-id="${r.id}">
+  $('practiceBlocks').innerHTML = rows.map(r => `<div class="block" data-id="${r.id}">
     <b>${esc(r.name)}</b> <small>(${esc(r.group)})</small>
     ${r.blocks.map((b, i) => b.days
       ? `<div class="row" data-b="${i}">по документу: ${ruDate(b.from)} – ${ruDate(b.to)} <button type="button" data-act="del">✕</button></div>`
       : `<div class="row" data-b="${i}">с <input type="date" data-f="from" value="${b.from}"> по <input type="date" data-f="to" value="${b.to}">
-          <input type="number" data-f="hoursPerDay" min="0" value="${b.hoursPerDay}" style="width:70px"> ч/день
+          <input type="number" data-f="hoursPerDay" min="0" value="${b.hoursPerDay}" style="width:70px"> ч/день <b class="star">*</b>
           <label class="inline"><input type="checkbox" data-f="saturday"${b.saturday ? ' checked' : ''}> и суббота</label>
           <button type="button" data-act="del">✕</button></div>`).join('')}
-    <button type="button" data-act="add">+ период</button></div>`).join('')
-    : '<p class="hint">Практика не добавлена: нет docx практики с этим руководителем. Добавьте вручную кнопкой «+ Практика по графику» ниже.</p>';
+    <div class="row"><button type="button" data-act="add">+ период</button>
+      <button type="button" data-act="graph">Периоды из графика</button></div></div>`).join('');
 
   $('practiceBlocks').querySelectorAll('.block').forEach(box => {
     const row = S.rows.find(r => r.id === box.dataset.id);
-    box.querySelectorAll('.row').forEach(line => {
+    box.querySelectorAll('.row[data-b]').forEach(line => {
       const b = row.blocks[Number(line.dataset.b)];
       line.querySelectorAll('input').forEach(input => {
         input.oninput = () => {
-          b[input.dataset.f] = input.type === 'checkbox' ? input.checked : (input.dataset.f === 'hoursPerDay' ? Number(input.value) : input.value);
+          b[input.dataset.f] = input.type === 'checkbox' ? input.checked : (input.dataset.f === 'hoursPerDay' ? input.value : input.value);
           recompute();
         };
       });
@@ -329,6 +266,13 @@ function renderPracticeBlocks() {
     box.querySelector('[data-act="add"]').onclick = () => {
       const last = row.blocks[row.blocks.length - 1];
       row.blocks.push({ from: last?.to || S.graph.weeks[0].start, to: last?.to || S.graph.weeks[0].start, hoursPerDay: last?.hoursPerDay ?? '', saturday: false });
+      renderPracticeBlocks(); recompute();
+    };
+    // периоды берутся только при точном совпадении индекса модуля с «Обозначениями» графика для группы
+    box.querySelector('[data-act="graph"]').onclick = () => {
+      const periods = graphPeriods(S.graph, row.group, row.moduleIndex.trim());
+      if (!periods.length) { showMessage(`В графике не нашлось недель практики для группы ${row.group} и индекса «${row.moduleIndex}». Укажите индекс из подсказки в таблице или добавьте период вручную.`, true); return; }
+      row.blocks = periods;
       renderPracticeBlocks(); recompute();
     };
   });
@@ -420,8 +364,6 @@ function recompute() {
   if (S.schedule?.semester && period && S.schedule.semester !== period.idx + 1) {
     problems.push(`Загружено расписание ${S.schedule.semester} семестра, а выбран ${period.idx + 1} семестр — часы считаются по загруженному расписанию.`);
   }
-  if (S.rows.some(r => r.plan === null)) problems.push('План часов не задан у части дисциплин: в Word колонки «Запланировано» и «Остаток» останутся пустыми. Введите план в блоке 3.');
-  if (S.rows.some(r => r.kind === 'practice' && r.blocks.some(b => !b.days && !(Number(b.hoursPerDay) > 0)))) problems.push('У практики не указаны часы в день — такие периоды дают 0 часов. Заполните блок «Практика».');
   showMessage(problems.join('\n'));
   renderTransfers();
   S.activeMonth = Math.min(S.activeMonth, Math.max(0, (S.result?.sheets.length || 1) - 1));
@@ -429,6 +371,7 @@ function recompute() {
 }
 
 function refreshPreview() {
+  markRequired();
   const sheets = S.result?.sheets || [];
   $('download').disabled = !sheets.length;
   $('tabs').innerHTML = sheets.map((s, i) => `<button type="button" class="${i === S.activeMonth ? 'on' : ''}" data-i="${i}">${MONTH_NAMES[s.month]} ${s.year}</button>`).join('');

@@ -40,10 +40,6 @@ export class AcademicGraph {
   // Расшифровка кодов для группы — только при точном совпадении «семейства» (П2А → «п2»), без подбора похожих
   legendFor(group) { return this.legend[familyOf(group)] || null; }
 
-  // Все модули из «Обозначений» графика: [{ family, code, index, title }]
-  legendModules() {
-    return Object.entries(this.legend).flatMap(([family, items]) => Object.entries(items).map(([code, m]) => ({ family, code, ...m })));
-  }
 
   // Модуль группы по индексу («ПМ4»): { code, index, title } или null
   moduleOf(group, index) {

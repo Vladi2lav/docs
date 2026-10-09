@@ -61,14 +61,20 @@ export function buildRows({ teacher, entries, graph, practiceDocs }) {
   return { rows, warnings };
 }
 
-// Практика, добавленная вручную: модуль выбран пользователем из «Обозначений» графика, периоды — недели с его кодом
-export function makePracticeRow({ id, group, module, graph }) {
+// Практика, добавленная вручную: всё, кроме префикса «УП - », заполняет пользователь
+export function emptyPracticeRow({ id, group, start }) {
   const row = {
-    id, kind: 'practice', moduleIndex: module.index, name: PRACTICE_PREFIX + module.title, group, plan: null,
-    blocks: graph.runsOf(group, module.code).map(r => ({ ...r, hoursPerDay: '', saturday: false })),
+    id, kind: 'practice', moduleIndex: '', name: PRACTICE_PREFIX, group, plan: null,
+    blocks: [{ from: start, to: start, hoursPerDay: '', saturday: false }],
   };
   snapshot([row]);
   return row;
+}
+
+// Периоды практики из недель графика, где у группы стоит код модуля с этим индексом (точное совпадение), иначе []
+export function graphPeriods(graph, group, moduleIndex) {
+  const mod = moduleIndex && graph.moduleOf(group, moduleIndex);
+  return mod ? graph.runsOf(group, mod.code).map(r => ({ ...r, hoursPerDay: '', saturday: false })) : [];
 }
 
 // Исходные значения из документов — к ним возвращает «Заполнить по документам»

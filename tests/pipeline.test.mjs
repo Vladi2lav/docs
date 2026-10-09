@@ -20,7 +20,8 @@ import { buildRows, matchSupervisor, teacherNames } from '../src/domain/rows.js'
 import { createCalendar } from '../src/domain/calendar.js';
 import { buildTimesheet } from '../src/domain/timesheet.js';
 import { buildDocx } from '../src/export/docx.js';
-import { fillRow } from '../src/domain/autofill.js';
+import { resetRow } from '../src/domain/autofill.js';
+import { emptyPracticeRow, graphPeriods } from '../src/domain/rows.js';
 
 const src = name => readFileSync(new URL(`../исходники/${name}`, import.meta.url));
 const holidays = JSON.parse(readFileSync(new URL('../data/holidays-kz.json', import.meta.url), 'utf8'));
@@ -70,10 +71,13 @@ assert.equal(buildRows({ teacher: 'Зеленин В.А.', entries: schedule.ent
 const calendar = createCalendar({ holidays, state: { overrides: {}, transfers: [] }, workSaturday: false, years: [2025, 2028] });
 const theory = rows[0];
 const transfers = [{ rowId: theory.id, from: '2026-09-01', to: '2026-09-05', hours: 2 }];
-// «Заполнить по документам»: плана в документах нет — он вводится вручную (эталон Жаксыбаевой: 96 / 264)
-const report = rows.map(r => fillRow(r, { graph }));
-assert.ok(report.every(r => r.missing.some(t => t.startsWith('план часов'))));
-assert.equal(buildTimesheet({ rows, graph, calendar, from: sems[0].from, to: sems[0].to, carryOver: true }).sheets[0].rows[0].remainingText, '');   // плана нет — остаток не выдумываем
+// «Заполнить по документам» возвращает строки к значениям документов; плана в документах нет — он вводится вручную (эталон: 96 / 264)
+rows.forEach(resetRow);
+assert.ok(rows.every(r => r.plan === null));
+// периоды практики из графика — только по точному индексу модуля группы
+assert.ok(graphPeriods(graph, 'П2А', 'ПМ4').length >= 1);
+assert.equal(graphPeriods(graph, 'П2А', 'ПМ99').length, 0);
+assert.equal(emptyPracticeRow({ id: 'px', group: 'П2А', start: '2026-09-01' }).kind, 'practice');
 rows[0].plan = 96;
 rows[1].plan = 264;
 
