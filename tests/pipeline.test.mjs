@@ -40,6 +40,11 @@ assert.equal(graph.parityAt('2026-09-08'), 'right');
 assert.equal(graph.codeAt('П2А', '2026-09-08'), '');          // теория
 assert.ok(graph.codeAt('П2А', '2026-11-03'));                  // практика
 assert.equal(graph.moduleOf('П2А', 'ПМ4').title.startsWith('Разработка десктопных'), true);
+// «п» = «Праздничная неделя» (по «Обозначениям» графика): считается обычной учебной неделей
+assert.deepEqual(graph.theoryCodes, ['п']);
+const holWeek = graph.weeks.find(w => graph.groups['П2А'].codes[w.num] === 'п');
+assert.ok(holWeek, 'в графике П2А есть праздничная неделя');
+assert.equal(graph.codeAt('П2А', holWeek.start), '');
 console.log('график:', graph.college, '|', graph.deputy, '|', graph.semesters(['П2А']));
 
 // расписание

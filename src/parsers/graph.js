@@ -34,7 +34,8 @@ export class AcademicGraph {
     const w = this.weekAt(date);
     const g = this.groups[normGroup(group)];
     if (!w || !g) return null;
-    return g.codes[w.num] || '';
+    const code = g.codes[w.num] || '';
+    return this.theoryCodes.includes(code) ? '' : code;      // «праздничная неделя» — обычная учебная неделя
   }
 
   // Расшифровка кодов для группы — только при точном совпадении «семейства» (П2А → «п2»), без подбора похожих
@@ -111,6 +112,7 @@ export function parseGraph(sheet, { startYear }) {
     weeks,
     groups,
     legend: readLegend(sheet, legendRow >= 0 ? legendRow : anchor.weekRow),
+    theoryCodes: readTheoryCodes(sheet, legendRow >= 0 ? legendRow : anchor.weekRow),
     college: readCollege(sheet, anchor.monthRow),
     deputy: readDeputy(sheet),
     specialties: readSpecialties(sheet),
@@ -224,6 +226,19 @@ function readLegend(sheet, fromRow) {
     }
   }
   return legend;
+}
+
+// Коды, которые «Обозначения» графика расшифровывают как «Праздничная неделя»: занятия по расписанию идут,
+// а сами праздничные дни выпадают по календарю.
+function readTheoryCodes(sheet, fromRow) {
+  const codes = new Set();
+  for (let r = fromRow; r < sheet.rowCount; r++) {
+    for (let c = 0; c < sheet.colCount - 1; c++) {
+      const code = sheet.get(r, c);
+      if (code && code.length <= 3 && /праздничн/i.test(sheet.get(r, c + 1))) codes.add(code);
+    }
+  }
+  return [...codes];
 }
 
 function readCollege(sheet, untilRow) {
