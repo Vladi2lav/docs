@@ -11,12 +11,17 @@
 <body>
 <header>
   <div class="topbar">
-    <h1>Учёт времени педагога</h1>
+    <h1>Учёт времени педагога <small id="appVersion" class="ver"></small></h1>
     <div class="ws">
       <button type="button" id="wsBtn" title="Рабочие области">📁 <span id="wsName">Без названия</span> ▾</button>
       <span id="saveState" class="savestate clean">Нет изменений</span>
       <button type="button" id="saveBtn" class="primary" title="Ctrl+S">Сохранить</button>
     </div>
+  </div>
+  <div id="updateBanner" class="update" hidden>
+    Сайт обновлён до версии <b data-version></b>, а у вас открыта старая.
+    <button type="button" id="updateBtn">Обновить страницу</button>
+    <span>Сохраните работу перед обновлением.</span>
   </div>
   <nav id="nav">
     <button type="button" data-tab="sheet" class="on">Ведомость</button>

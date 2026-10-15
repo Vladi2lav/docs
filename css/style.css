@@ -102,3 +102,7 @@ dialog h2 { margin-top: 0; }
 #annualMissing { margin-top: 6px; color: var(--warn); }
 .noteline { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
 .noteline input { flex: 1; min-width: 220px; }
+
+.ver { font-size: 11px; font-weight: normal; color: #8fa0bd; margin-left: 8px; }
+.update { background: #fde68a; color: #4a3500; border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.update span { font-size: 12px; }

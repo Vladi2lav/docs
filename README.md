@@ -45,6 +45,7 @@ src/
   export/             docx.js (ведомость) · annual-docx.js (годовой учёт) · ooxml.js (общие примитивы) · docx-package.js
   ui/                 preview.js (ведомость) · graph-view.js (вкладка графика) · calendar-view.js (вкладка календаря)
   util/               dates · sheet (чтение xlsx) · workspaces (сохранение областей)
+tools/bump-version.mjs   перед каждым коммитом: node tools/bump-version.mjs — версия в шапке и подсказка «Сайт обновлён»
 tests/pipeline.test.mjs  сквозная проверка на файлах из исходники/  (npm install && npm test)
 _legacy/              прежняя версия — можно удалить
 ```
