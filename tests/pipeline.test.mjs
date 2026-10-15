@@ -59,6 +59,10 @@ assert.deepEqual(graph.theoryCodes, ['п']);
 const holWeek = graph.weeks.find(w => graph.groups['П2А'].codes[w.num] === 'п');
 assert.ok(holWeek, 'в графике П2А есть праздничная неделя');
 assert.equal(graph.codeAt('П2А', holWeek.start), '');
+// финансирование по цвету ячейки группы: П2А — цветная (грант), П2Б — без заливки (коммерция)
+assert.equal(graph.fundingOf('П2А'), 'grant');
+assert.equal(graph.fundingOf('П2Б'), 'comm');
+assert.equal(graph.fundingOf('П2Б', { 'П2Б': 'grant' }), 'grant');      // правка пользователя важнее цвета
 console.log('график:', graph.college, '|', graph.deputy, '|', graph.semesters(['П2А']));
 
 // расписание

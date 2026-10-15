@@ -106,3 +106,10 @@ dialog h2 { margin-top: 0; }
 .ver { font-size: 11px; font-weight: normal; color: #8fa0bd; margin-left: 8px; }
 .update { background: #fde68a; color: #4a3500; border-radius: 8px; padding: 8px 12px; margin: 0 0 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .update span { font-size: 12px; }
+
+.fundswitch { display: flex; border: 1px solid #ffffff40; border-radius: 8px; overflow: hidden; }
+.fundswitch button { background: transparent; color: #cfd8e8; border: 0; border-radius: 0; padding: 6px 14px; }
+.fundswitch button.on { background: #fde68a; color: #3d2c00; font-weight: 600; }
+.fundswitch small { opacity: .75; font-weight: normal; }
+button.fund { font-size: 10px; padding: 0 5px; margin-left: 4px; border-radius: 8px; }
+button.fund.grant { background: #fde68a; } button.fund.comm { background: #e5e7eb; }

@@ -19,7 +19,7 @@ import { esc, renderSheet } from './ui/preview.js';
 import { renderGraph, highlightSet } from './ui/graph-view.js';
 import { renderCalendar } from './ui/calendar-view.js';
 import { ruDate, weekday, ymOf } from './util/dates.js';
-import { MONTH_NAMES } from './config.js';
+import { MONTH_NAMES, FUNDING } from './config.js';
 import { initVersion } from './ui/version.js';
 import { deleteWorkspace, getWorkspace, listWorkspaces, putWorkspace, workspaceFromJson, workspaceToJson } from './util/workspaces.js';
 
@@ -38,6 +38,8 @@ const S = {
   entries: [],   // исходные файлы (имя + содержимое) — нужны для сохранения рабочей области
   teacherStates: {},             // педагог → { rows, warnings, fields, semester }: правки, сделанные для каждого педагога
   calStart: null,                // первый месяц, показанный в календаре ({ y, m })
+  funding: 'grant',              // учёт ведётся отдельно: грантовые или коммерческие группы
+  fundingOverrides: {},          // группа → 'grant' | 'comm', если цвет в графике неверен
   wsId: null, wsName: '', dirty: false, loading: false, savedAt: null,
 };
 const FIELD_IDS = ['fullName', 'specialty', 'dept', 'cmk', 'position'];
@@ -72,6 +74,7 @@ async function init() {
   renderDayTransfers();
   S.holidays = await (await fetch('data/holidays-kz.json')).json();   // обработчики уже подключены; календарь нужен только для расчёта
   initVersion({ label: $('appVersion'), banner: $('updateBanner'), button: $('updateBtn') });
+  $('fundSwitch').querySelectorAll('button').forEach(bt => { bt.onclick = () => setFunding(bt.dataset.fund); });
   initWorkspaces();
 }
 
@@ -206,6 +209,7 @@ function selectTeacher(name, { fresh = false, keepFields = false } = {}) {
         FIELD_IDS.forEach(id => { $(id).value = ''; });
         $('semester').value = '0';
       }
+      if (S.rows.length && !S.rows.some(isVisible)) S.funding = S.funding === 'grant' ? 'comm' : 'grant';
     }
   }
   renderRows();
@@ -215,7 +219,7 @@ function selectTeacher(name, { fresh = false, keepFields = false } = {}) {
 
 function renderRows() {
   const body = $('rowsTable').tBodies[0];
-  body.innerHTML = S.rows.map((r, i) => {
+  body.innerHTML = S.rows.map((r, i) => (isVisible(r) ? [r, i] : null)).filter(Boolean).map(([r, i]) => {
     const legend = S.graph && S.graph.legendFor(r.group);
     const mods = legend ? Object.values(legend) : [];
     const known = mods.some(m => m.index === r.moduleIndex);
@@ -256,7 +260,7 @@ function renderRows() {
     indexField.oninput = indexField.tagName === 'SELECT' ? null : () => { row.moduleIndex = indexField.value; recompute(); };
     tr.querySelector('button').onclick = () => { S.rows.splice(Number(tr.dataset.i), 1); renderRows(); renderPracticeBlocks(); recompute(); };
   });
-  $('trRow').innerHTML = S.rows.filter(r => r.kind === 'theory').map(r => `<option value="${r.id}">${esc(r.name)} (${esc(r.group)})</option>`).join('');
+  $('trRow').innerHTML = visibleRows().filter(r => r.kind === 'theory').map(r => `<option value="${r.id}">${esc(r.name)} (${esc(r.group)})</option>`).join('');
   $('prAdd').disabled = !(S.teacher && S.graph);
 }
 
@@ -306,7 +310,7 @@ function markRequired() {
 
 // Блоки практики: период × часов в день либо точные часы по датам (из docx)
 function renderPracticeBlocks() {
-  const rows = S.rows.filter(r => r.kind === 'practice');
+  const rows = visibleRows().filter(r => r.kind === 'practice');
   $('practiceBlocks').innerHTML = rows.map(r => `<div class="block" data-id="${r.id}">
     <b>${esc(r.name)}</b> <small>(${esc(r.group)})</small>
     ${r.blocks.map((b, i) => b.days
@@ -442,11 +446,17 @@ function recompute() {
     });
   }
 
-  if (S.graph && S.rows.length && period) {
+  updateFundSwitch();
+  if (S.graph && visibleRows().length && period) {
     S.result = buildTimesheet({
-      rows: S.rows, graph: S.graph, calendar: makeCalendar(), from: period.from, to: period.to,
+      rows: visibleRows(), graph: S.graph, calendar: makeCalendar(), from: period.from, to: period.to,
       carryOver: $('carry').checked && period.idx === 0, transfers: transfersOf(), swapWeeks: !!S.cal.swapWeeks, useBase: sem2,
     });
+    // годовой учёт охватывает все группы педагога (грант и коммерцию вместе, по страницам типов нагрузки)
+    S.resultAll = sem2 ? buildTimesheet({
+      rows: S.rows, graph: S.graph, calendar: makeCalendar(), from: period.from, to: period.to,
+      carryOver: false, transfers: transfersOf(), swapWeeks: !!S.cal.swapWeeks, useBase: true,
+    }) : null;
     $('rowsTable').tBodies[0].querySelectorAll('input[data-f="plan"]').forEach((input, i) => { input.placeholder = `по расписанию ${S.result.totals[i]}`; });
     for (const g of new Set(S.rows.map(r => r.group))) {
       if (!S.graph.hasGroup(g)) problems.push(`Группа ${g} не найдена в графике: практика и каникулы для неё не учитываются, теория идёт весь семестр. Проверьте название группы (поле подсвечено красным).`);
@@ -493,7 +503,7 @@ async function download() {
   const y = S.graph.startYear;
   const a = Object.assign(document.createElement('a'), {
     href: URL.createObjectURL(blob),
-    download: `Учет_времени_${String(y).slice(2)}-${String(y + 1).slice(2)}_${S.teacher.split(/\s+/)[0]}_${Number($('semester').value) + 1}сем.docx`,
+    download: `Учет_времени_${String(y).slice(2)}-${String(y + 1).slice(2)}_${S.teacher.split(/\s+/)[0]}_${Number($('semester').value) + 1}сем_${FUNDING.find(f => f.key === S.funding).file}.docx`,
   });
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 10000);
@@ -507,6 +517,11 @@ function renderGraphTab() {
   renderGraph($('graphView'), S.graph, {
     highlight: highlightSet(groups), query: $('graphQuery').value,
     onlyHighlighted: $('graphMine').checked && groups.length > 0, semesters: S.graph.semesters(groups),
+    fundingOf: key => S.graph.fundingOf(key, S.fundingOverrides),
+    onFunding: key => {
+      S.fundingOverrides[key] = S.graph.fundingOf(key, S.fundingOverrides) === 'grant' ? 'comm' : 'grant';
+      markDirty(); renderGraphTab(); renderRows(); renderPracticeBlocks(); recompute();
+    },
   });
 }
 
@@ -625,6 +640,8 @@ function snapshot() {
     teacher: S.teacher,
     teacherStates: S.teacherStates,
     transfers: S.transfers,
+    funding: S.funding,
+    fundingOverrides: S.fundingOverrides,
     cal: S.cal,
     calStart: S.calStart,
     global: { college: $('college').value, deputy: $('deputy').value, carry: $('carry').checked },
@@ -644,6 +661,8 @@ async function applySnapshot(d) {
     S.annual = d.annual || { fullGen: '', collegeGen: '', notes: {} };
     if (d.files.prev) await loadPrevBuffer(d.files.prev.name, d.files.prev.buffer);
     S.transfers = d.transfers || {};
+    S.funding = d.funding || 'grant';
+    S.fundingOverrides = d.fundingOverrides || {};
     S.cal = d.cal || S.cal;
     S.calStart = d.calStart || null;
     $('college').value = d.global?.college ?? '';
@@ -781,12 +800,15 @@ function annualMeta() {
 }
 
 function renderAnnual() {
-  if ($('annualWrap').hidden || !S.result || !S.prev) {
+  if ($('annualWrap').hidden || !S.resultAll || !S.prev) {
     if (!$('annualWrap').hidden) { $('annualTable').tBodies[0].innerHTML = ''; $('annualMissing').textContent = 'Загрузите ведомость 1 семестра (блок 2) — без неё годовой учёт собрать нельзя.'; $('annualDownload').disabled = true; }
     return;
   }
   const period = currentPeriod();
-  S.entries = buildAnnualEntries({ rows: S.rows, sheets: S.result.sheets, prev: S.prev, sem2Start: period.from, extraLoads: S.extraLoads });
+  S.entries = buildAnnualEntries({
+    rows: S.rows, sheets: S.resultAll.sheets, prev: S.prev, sem2Start: period.from, extraLoads: S.extraLoads,
+    defaultLoad: group => S.graph.fundingOf(group, S.fundingOverrides) || '',
+  });
   if (!S.annual.collegeGen && $('college').value) { S.annual.collegeGen = genitiveCollege($('college').value); }
   if ($('collegeGen') !== document.activeElement) $('collegeGen').value = S.annual.collegeGen;
   if ($('fullGen') !== document.activeElement) $('fullGen').value = S.annual.fullGen;
@@ -835,4 +857,27 @@ async function downloadAnnual() {
   const blob = await buildAnnualDocx(JSZip, S.entries, annualMeta());
   const y = S.graph.startYear;
   download_(blob, `Годовой_учет_${String(y).slice(2)}-${String(y + 1).slice(2)}_${S.teacher.split(/\s+/)[0]}.docx`);
+}
+
+// ───────── грант / коммерция ─────────
+
+// Финансирование строки: по группе (цвет в графике или правка). Неизвестное (нет группы в графике) видно в обоих режимах.
+const fundingOfRow = row => (S.graph ? S.graph.fundingOf(row.group, S.fundingOverrides) : null);
+const isVisible = row => { const f = fundingOfRow(row); return !f || f === S.funding; };
+const visibleRows = () => S.rows.filter(isVisible);
+
+function setFunding(key) {
+  if (S.funding === key) return;
+  S.funding = key;
+  S.activeMonth = 0;
+  markDirty();
+  renderRows(); renderPracticeBlocks(); recompute();
+}
+
+function updateFundSwitch() {
+  for (const bt of $('fundSwitch').querySelectorAll('button')) {
+    const n = S.rows.filter(r => fundingOfRow(r) === bt.dataset.fund).length;
+    bt.classList.toggle('on', bt.dataset.fund === S.funding);
+    bt.querySelector('small').textContent = S.rows.length ? `(${n})` : '';
+  }
 }

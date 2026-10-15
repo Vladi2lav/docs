@@ -12,6 +12,10 @@
 <header>
   <div class="topbar">
     <h1>Учёт времени педагога <small id="appVersion" class="ver"></small></h1>
+    <div class="fundswitch" id="fundSwitch" title="Учёт ведётся отдельно для грантовых и коммерческих групп (грантовые выделены цветом в графике)">
+      <button type="button" data-fund="grant" class="on">Грант <small></small></button>
+      <button type="button" data-fund="comm">Коммерция <small></small></button>
+    </div>
     <div class="ws">
       <button type="button" id="wsBtn" title="Рабочие области">📁 <span id="wsName">Без названия</span> ▾</button>
       <span id="saveState" class="savestate clean">Нет изменений</span>

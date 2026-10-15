@@ -13,7 +13,8 @@ const sum = list => list.reduce((a, b) => a + b, 0);
 
 // Записи для годовой формы. Строки 2 семестра дополняются часами 1 семестра из ведомости; строки, которые были
 // только в 1 семестре, добавляются как есть. months: { индекс месяца: часы } за сентябрь–июнь.
-export function buildAnnualEntries({ rows, sheets, prev, sem2Start, extraLoads = {} }) {
+// defaultLoad(группа) — тип нагрузки, если пользователь его не выбрал (грант/комм по цвету группы в графике)
+export function buildAnnualEntries({ rows, sheets, prev, sem2Start, extraLoads = {}, defaultLoad = () => '' }) {
   const sem2Pos = pos(sem2Start.m);
   const used = new Set();
   const entries = rows.map((row, i) => {
@@ -22,14 +23,14 @@ export function buildAnnualEntries({ rows, sheets, prev, sem2Start, extraLoads =
     const months = {};
     if (p) for (const [m, h] of Object.entries(p.months)) if (pos(Number(m)) < sem2Pos) months[m] = h;
     for (const sh of sheets) if (pos(sh.month) >= sem2Pos) months[sh.month] = sh.rows[i].total;
-    return { id: row.id, ref: row, kind: row.kind, group: row.group, moduleIndex: row.moduleIndex, name: row.name, plan: row.plan, load: row.load || '', months, hasPrev: !!p };
+    return { id: row.id, ref: row, kind: row.kind, group: row.group, moduleIndex: row.moduleIndex, name: row.name, plan: row.plan, load: row.load || defaultLoad(row.group), months, hasPrev: !!p };
   });
   for (const p of prev ? prev.rows : []) {
     if (used.has(p.key)) continue;
     const months = {};
     for (const [m, h] of Object.entries(p.months)) if (pos(Number(m)) < sem2Pos) months[m] = h;
     entries.push({ id: `prev:${p.key}`, ref: null, key: p.key, kind: isPractice(p.name) ? 'practice' : 'theory', group: p.group, moduleIndex: p.moduleIndex, name: p.name,
-      plan: p.plan, load: extraLoads[p.key] || '', months, hasPrev: true });
+      plan: p.plan, load: extraLoads[p.key] || defaultLoad(p.group), months, hasPrev: true });
   }
   for (const e of entries) e.fact = sum(YEAR_MONTHS.map(m => e.months[m] || 0));
   return entries;

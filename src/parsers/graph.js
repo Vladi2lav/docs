@@ -42,6 +42,13 @@ export class AcademicGraph {
     return this.theoryCodes.includes(codes[0]) ? '' : codes[0];      // «праздничная неделя» — обычная учебная неделя
   }
 
+  // Финансирование группы: правка пользователя или цвет в графике. У объединённой группы — только если у всех частей одинаковое.
+  fundingOf(group, overrides = {}) {
+    const keys = groupKeys(group);
+    const values = [...new Set(keys.map(k => overrides[k] || this.groups[k]?.funding || null))];
+    return keys.length && values.length === 1 ? values[0] : null;
+  }
+
   // Есть ли группа (все части объединённой) в графике
   hasGroup(group) {
     const keys = groupKeys(group);
@@ -225,7 +232,9 @@ function readGroups(sheet, { weekRow }) {
     const codes = {};
     // число в ячейке недели — пометка «кол-во недель теории», а не код
     for (const { c, num } of weekCols) codes[num] = /^\d+$/.test(sheet.get(r, c)) ? '' : sheet.get(r, c);
-    groups[normGroup(name)] = { name, codes };
+    // в графике грантовые группы выделены цветом; группа без заливки — коммерческая
+    const fill = sheet.fill(r, nameCol);
+    groups[normGroup(name)] = { name, codes, fill, funding: fill ? 'grant' : 'comm' };
   }
   return groups;
 }

@@ -2,7 +2,7 @@
 // Значение объединённой области лежит только в её левой верхней ячейке — как и в самом Excel.
 
 export function readSheet(XLSX, arrayBuffer) {
-  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  const wb = XLSX.read(arrayBuffer, { type: 'array', cellStyles: true });
   const ws = wb.Sheets[wb.SheetNames[0]];
   if (!ws) throw new Error('В файле нет листов');
 
@@ -31,5 +31,10 @@ export function readSheet(XLSX, arrayBuffer) {
     colCount,
     get: (r, c) => cells.get(`${r},${c}`) || '',
     span: (r, c) => spans.get(`${r},${c}`) || { rows: 1, cols: 1 },
+    // цвет заливки ячейки (hex) или '' — нужен графику: цветом там отмечены грантовые группы
+    fill: (r, c) => {
+      const s = ws[XLSX.utils.encode_cell({ r, c })]?.s;
+      return s && s.patternType && s.patternType !== 'none' ? (s.fgColor?.rgb || `theme${s.fgColor?.theme ?? ''}`) : '';
+    },
   };
 }
