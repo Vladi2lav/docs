@@ -13,7 +13,7 @@ const XLSX = require('xlsx');
 globalThis.DOMParser = DOMParser;
 
 import { readSheet } from '../src/util/sheet.js';
-import { parseGraph } from '../src/parsers/graph.js';
+import { parseGraph, groupKeys } from '../src/parsers/graph.js';
 import { parseSchedule } from '../src/parsers/schedule.js';
 import { parsePractice } from '../src/parsers/practice.js';
 import { buildRows, matchSupervisor, teacherNames } from '../src/domain/rows.js';
@@ -32,6 +32,14 @@ const holidays = JSON.parse(readFileSync(new URL('../data/holidays-kz.json', imp
 
 const graph = parseGraph(readSheet(XLSX, src('График учебного процесса 2026-2027  14 09.xlsx')), { startYear: 2026 });
 const schedule = parseSchedule(readSheet(XLSX, src('2 курс 1 семестр 26-27 13.09.xlsx')));
+
+// названия групп: дуальные «-д», пометки в скобках и словами, объединённые «П2У/Г»
+assert.deepEqual(groupKeys('П2К-д'), ['П2К']);
+assert.deepEqual(groupKeys('П1А(д)'), ['П1А']);
+assert.deepEqual(groupKeys('П4А (WEB)'), ['П4А']);
+assert.deepEqual(groupKeys('ИС2У заоч'), ['ИС2У']);
+assert.deepEqual(groupKeys('П2У/Г'), ['П2У', 'П2Г']);
+assert.deepEqual(groupKeys('Обозначения:'), []);
 
 // график
 assert.equal(graph.weeks[0].start, '2026-09-01');

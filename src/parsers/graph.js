@@ -14,7 +14,9 @@ const MONTHS = {
   сентябр: 8, октябр: 9, ноябр: 10, декабр: 11, январ: 0, феврал: 1,
   март: 2, апрел: 3, май: 4, июн: 5, июл: 6, август: 7,
 };
-const GROUP_RE = new RegExp(`^[${LETTERS}]{1,6}\\d{1,2}[${LETTERS}]{0,2}$`, 'i');
+// Шифр группы в начале подписи: «П2К-д», «П1А(д)», «П4А (WEB)», «ИС2У заоч» → «П2К», «П1А», «П4А», «ИС2У»
+const GROUP_TOKEN = new RegExp(`^([${LETTERS}]{1,6})\\s*(\\d{1,2})\\s*([${LETTERS}]{0,2})(?![${LETTERS}])`);
+const GROUP_EXTRA = new RegExp(`^\\s*/\\s*([${LETTERS}]{1,2})(?![${LETTERS}])`);
 
 export class AcademicGraph {
   constructor(data) { Object.assign(this, data); }
@@ -30,12 +32,20 @@ export class AcademicGraph {
   }
 
   // Код недели группы: '' — теория, строка — практика/каникулы/…, null — группа или неделя неизвестны.
+  // Объединённая группа расписания («П2У/Г») — код известен, только если у всех её групп он одинаковый.
   codeAt(group, date) {
     const w = this.weekAt(date);
-    const g = this.groups[normGroup(group)];
-    if (!w || !g) return null;
-    const code = g.codes[w.num] || '';
-    return this.theoryCodes.includes(code) ? '' : code;      // «праздничная неделя» — обычная учебная неделя
+    const gs = groupKeys(group).map(k => this.groups[k]);
+    if (!w || !gs.length || gs.some(g => !g)) return null;
+    const codes = [...new Set(gs.map(g => g.codes[w.num] || ''))];
+    if (codes.length > 1) return null;
+    return this.theoryCodes.includes(codes[0]) ? '' : codes[0];      // «праздничная неделя» — обычная учебная неделя
+  }
+
+  // Есть ли группа (все части объединённой) в графике
+  hasGroup(group) {
+    const keys = groupKeys(group);
+    return keys.length > 0 && keys.every(k => this.groups[k]);
   }
 
   // Расшифровка кодов для группы — только при точном совпадении «семейства» (П2А → «п2»), без подбора похожих
@@ -86,7 +96,21 @@ export class AcademicGraph {
   }
 }
 
-export const normGroup = name => String(name).replace(/\([^)]*\)/g, '').replace(/\s+/g, '').toUpperCase();
+// «П2У/Г» → ['П2У', 'П2Г'];  «П2К-д» → ['П2К'];  не похоже на группу → []
+export function groupKeys(name) {
+  const s = String(name).toUpperCase().trim();
+  const m = GROUP_TOKEN.exec(s);
+  if (!m) return [];
+  const base = m[1] + m[2];
+  const keys = [base + m[3]];
+  let rest = s.slice(m[0].length);
+  for (let x = GROUP_EXTRA.exec(rest); x; x = GROUP_EXTRA.exec(rest)) {
+    keys.push(base + x[1]);
+    rest = rest.slice(x[0].length);
+  }
+  return keys;
+}
+export const normGroup = name => groupKeys(name)[0] || String(name).replace(/\s+/g, '').toUpperCase();
 export const familyOf = group => {
   const m = /^([^\d]+)(\d+)/.exec(normGroup(group));
   return m ? (m[1] + m[2]).toLowerCase() : '';
@@ -191,8 +215,8 @@ function readGroups(sheet, { weekRow }) {
   const groups = {};
   for (let r = weekRow + 1; r < sheet.rowCount; r++) {
     if (/Обозначения/i.test(sheet.get(r, 1)) || /Обозначения/i.test(sheet.get(r, 2))) break;
-    const name = sheet.get(r, nameCol).replace(/\([^)]*\)/g, '').replace(/\s+/g, '');
-    if (!GROUP_RE.test(name)) continue;
+    const name = sheet.get(r, nameCol).trim();
+    if (!groupKeys(name).length) continue;
     const codes = {};
     // число в ячейке недели — пометка «кол-во недель теории», а не код
     for (const { c, num } of weekCols) codes[num] = /^\d+$/.test(sheet.get(r, c)) ? '' : sheet.get(r, c);
@@ -206,7 +230,7 @@ function findNameCol(sheet, weekRow) {
   let best = 2; let bestCount = -1;
   for (let c = 0; c < 6; c++) {
     let n = 0;
-    for (let r = weekRow + 1; r < sheet.rowCount; r++) if (GROUP_RE.test(sheet.get(r, c).replace(/\([^)]*\)/g, '').replace(/\s+/g, ''))) n++;
+    for (let r = weekRow + 1; r < sheet.rowCount; r++) if (groupKeys(sheet.get(r, c)).length) n++;
     if (n > bestCount) { best = c; bestCount = n; }
   }
   return best;

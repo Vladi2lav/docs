@@ -293,7 +293,8 @@ function markRequired() {
     tr.querySelectorAll('input, select').forEach(el => {
       const optional = el.dataset.f === 'moduleIndex' && row.kind === 'theory';   // у теории (например, физкультура) модуля может не быть
       const skip = el.dataset.f === 'base' && !sem2;
-      el.classList.toggle('need', ready && !optional && !skip && el.value.trim() === '');
+      const unknownGroup = el.dataset.f === 'group' && !!S.graph && el.value.trim() !== '' && !S.graph.hasGroup(el.value);
+      el.classList.toggle('need', (ready && !optional && !skip && el.value.trim() === '') || unknownGroup);
     });
   });
   $('practiceBlocks').querySelectorAll('input[data-f="hoursPerDay"]').forEach(input => {
@@ -446,7 +447,7 @@ function recompute() {
     });
     $('rowsTable').tBodies[0].querySelectorAll('input[data-f="plan"]').forEach((input, i) => { input.placeholder = `по расписанию ${S.result.totals[i]}`; });
     for (const g of new Set(S.rows.map(r => r.group))) {
-      if (!S.graph.groups[normGroup(g)]) problems.push(`Группа ${g} не найдена в графике: практика и каникулы для неё не учитываются.`);
+      if (!S.graph.hasGroup(g)) problems.push(`Группа ${g} не найдена в графике: практика и каникулы для неё не учитываются, теория идёт весь семестр. Проверьте название группы (поле подсвечено красным).`);
     }
   }
   $('swapWeeks').textContent = S.cal.swapWeeks
