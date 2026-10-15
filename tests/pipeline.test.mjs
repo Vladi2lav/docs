@@ -43,6 +43,12 @@ assert.deepEqual(groupKeys('Обозначения:'), []);
 
 // график
 assert.equal(graph.weeks[0].start, '2026-09-01');
+// недели идут подряд: каждая не длиннее 7 дней и начинается сразу после предыдущей (стыки месяцев без подписи «27.10-1.11» тоже)
+const dayNo = s => Date.parse(`${s}T00:00:00Z`) / 864e5;
+graph.weeks.forEach((w, i) => {
+  assert.ok(dayNo(w.end) >= dayNo(w.start) && dayNo(w.end) - dayNo(w.start) <= 6, `неделя ${w.num}: ${w.start}..${w.end}`);
+  if (i) assert.ok(dayNo(w.start) - dayNo(graph.weeks[i - 1].end) >= 1 && dayNo(w.start) - dayNo(graph.weeks[i - 1].end) <= 3, `разрыв перед неделей ${w.num}`);
+});
 assert.equal(graph.weeks.find(w => w.num === 5).start, '2026-09-28');
 assert.equal(graph.parityAt('2026-09-08'), 'right');
 assert.equal(graph.codeAt('П2А', '2026-09-08'), '');          // теория

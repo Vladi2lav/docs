@@ -197,8 +197,13 @@ function readWeeks(sheet, { monthRow, weekRow, startRow, endRow }, startYear) {
       end = iso(yearFor(range.e[1]), range.e[1], range.e[0]);
       monthYear = year;
     } else if (month !== null && sheet.get(startRow, c) && sheet.get(endRow, c)) {
-      start = iso(monthYear, month, Number(sheet.get(startRow, c)));
-      end = iso(monthYear, month, Number(sheet.get(endRow, c)));
+      const startDay = Number(sheet.get(startRow, c));
+      const endDay = Number(sheet.get(endRow, c));
+      start = iso(monthYear, month, startDay);
+      // неделя на стыке месяцев без подписи «27.10-1.11»: конец меньше начала — значит, это уже следующий месяц
+      end = endDay < startDay
+        ? iso(month === 11 ? monthYear + 1 : monthYear, (month + 1) % 12, endDay)
+        : iso(monthYear, month, endDay);
     } else continue;
 
     weeks.push({ num, col: c, start, end });
