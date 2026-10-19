@@ -12,23 +12,29 @@ const XLSX = require('xlsx');
 
 globalThis.DOMParser = DOMParser;
 
-import { readSheet } from '../src/util/sheet.js';
-import { parseGraph, groupKeys } from '../src/parsers/graph.js';
-import { parseSchedule } from '../src/parsers/schedule.js';
-import { parsePractice } from '../src/parsers/practice.js';
-import { buildRows, matchSupervisor, teacherNames } from '../src/domain/rows.js';
-import { createCalendar } from '../src/domain/calendar.js';
-import { buildTimesheet } from '../src/domain/timesheet.js';
-import { buildDocx } from '../src/export/docx.js';
-import { workspaceFromJson, workspaceToJson } from '../src/util/workspaces.js';
-import { parsePrevSemester } from '../src/parsers/prev-semester.js';
-import { applyPrevSemester } from '../src/domain/carryover.js';
-import { annualProblems, buildAnnualEntries, genitiveCollege, groupByLoad } from '../src/domain/annual.js';
-import { buildAnnualDocx } from '../src/export/annual-docx.js';
-import { emptyPracticeRow, graphPeriods } from '../src/domain/rows.js';
+// Проверяемая версия сайта: RELEASE=1.0.0 npm test; по умолчанию — первая (самая новая) в releases.json
+const { releases } = JSON.parse(readFileSync(new URL('../releases.json', import.meta.url), 'utf8'));
+const RELEASE = process.env.RELEASE || releases[0].version;
+const BASE = new URL(`../releases/${RELEASE}/`, import.meta.url);
+console.log('версия:', RELEASE);
+const { readSheet } = await import(new URL('src/util/sheet.js', BASE).href);
+const { parseGraph, groupKeys } = await import(new URL('src/parsers/graph.js', BASE).href);
+const { parseSchedule } = await import(new URL('src/parsers/schedule.js', BASE).href);
+const { parsePractice } = await import(new URL('src/parsers/practice.js', BASE).href);
+const { buildRows, matchSupervisor, teacherNames } = await import(new URL('src/domain/rows.js', BASE).href);
+const { createCalendar } = await import(new URL('src/domain/calendar.js', BASE).href);
+const { buildTimesheet } = await import(new URL('src/domain/timesheet.js', BASE).href);
+const { buildDocx } = await import(new URL('src/export/docx.js', BASE).href);
+const { workspaceFromJson, workspaceToJson } = await import(new URL('src/util/workspaces.js', BASE).href);
+const { parsePrevSemester } = await import(new URL('src/parsers/prev-semester.js', BASE).href);
+const { applyPrevSemester } = await import(new URL('src/domain/carryover.js', BASE).href);
+const { annualProblems, buildAnnualEntries, genitiveCollege, groupByLoad } = await import(new URL('src/domain/annual.js', BASE).href);
+const { buildAnnualDocx } = await import(new URL('src/export/annual-docx.js', BASE).href);
+const { emptyPracticeRow, graphPeriods } = await import(new URL('src/domain/rows.js', BASE).href);
+
 
 const src = name => readFileSync(new URL(`../исходники/${name}`, import.meta.url));
-const holidays = JSON.parse(readFileSync(new URL('../data/holidays-kz.json', import.meta.url), 'utf8'));
+const holidays = JSON.parse(readFileSync(new URL('data/holidays-kz.json', BASE), 'utf8'));
 
 const graph = parseGraph(readSheet(XLSX, src('График учебного процесса 2026-2027  14 09.xlsx')), { startYear: 2026 });
 const schedule = parseSchedule(readSheet(XLSX, src('2 курс 1 семестр 26-27 13.09.xlsx')));

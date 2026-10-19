@@ -20,7 +20,7 @@ import { renderGraph, highlightSet } from './ui/graph-view.js';
 import { renderCalendar } from './ui/calendar-view.js';
 import { ruDate, weekday, ymOf } from './util/dates.js';
 import { MONTH_NAMES, FUNDING } from './config.js';
-import { initVersion } from './ui/version.js';
+import { initReleases, initVersion } from './ui/version.js';
 import { deleteWorkspace, getWorkspace, listWorkspaces, putWorkspace, workspaceFromJson, workspaceToJson } from './util/workspaces.js';
 
 const $ = id => document.getElementById(id);
@@ -74,6 +74,7 @@ async function init() {
   renderDayTransfers();
   S.holidays = await (await fetch('data/holidays-kz.json')).json();   // обработчики уже подключены; календарь нужен только для расчёта
   initVersion({ label: $('appVersion'), banner: $('updateBanner'), button: $('updateBtn') });
+  initReleases({ select: $('releaseSelect'), badge: $('channel') });
   $('fundSwitch').querySelectorAll('button').forEach(bt => { bt.onclick = () => setFunding(bt.dataset.fund); });
   initWorkspaces();
 }
