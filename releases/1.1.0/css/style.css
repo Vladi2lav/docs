@@ -117,3 +117,72 @@ button.fund.grant { background: #fde68a; } button.fund.comm { background: #e5e7e
 .release { font-size: 12px; padding: 2px 6px; margin-left: 8px; background: #22314f; color: #e5ecf7; border-color: #3a4c70; vertical-align: middle; }
 .channel { font-size: 11px; font-weight: 700; background: #f97316; color: #fff; border-radius: 6px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; }
 body.alpha header { box-shadow: inset 0 4px 0 #f97316; }
+
+/* ───── 1.1: источники, несколько расписаний, нагрузка ───── */
+.list.slim li { padding: 3px 8px; font-size: 13px; }
+.list.slim li small { color: var(--muted); display: block; }
+.file .filebtn { justify-self: start; }
+.rows.no-load .ld { display: none; }
+.rows td.ld select { max-width: 260px; }
+.field { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+#planMessages p { margin: 6px 0 0; padding: 6px 10px; border-radius: 6px; background: #fffbeb; color: var(--warn); }
+#planMessages p.err { background: #fef2f2; color: var(--err); }
+
+/* ───── поле выбора с плашками (как в 1С) ───── */
+.combo { position: relative; }
+.combo-box { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 3px 4px; min-height: 36px; cursor: text; }
+.combo.need .combo-box { border-color: #d93025; background: #fef2f2; }
+.combo-chips { display: contents; }
+.combo-chip { display: inline-flex; align-items: center; gap: 4px; background: #e8eefc; color: #1c2f66; border-radius: 12px; padding: 1px 4px 1px 10px; font-size: 13px; max-width: 100%; }
+.combo-chip button { border: 0; background: transparent; padding: 0 5px; line-height: 1; color: #55659a; border-radius: 50%; }
+.combo-chip button:hover { background: #c9d6f7; }
+.combo-input { flex: 1; min-width: 140px; border: 0; outline: 0; padding: 4px; background: transparent; }
+.combo-toggle { border: 0; background: transparent; padding: 2px 8px; color: var(--muted); }
+.combo-list { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 2px); margin: 0; padding: 4px 0; list-style: none; background: #fff; border: 1px solid var(--line); border-radius: 8px; max-height: 260px; overflow: auto; box-shadow: 0 8px 24px #0002; }
+.combo-list li { padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.combo-list li.on, .combo-list li:hover { background: #eaf0ff; }
+.combo-list li.none { color: var(--muted); cursor: default; }
+
+/* ───── шаблон недели ───── */
+table.tpl { border-collapse: collapse; font-size: 11px; min-width: 100%; }
+table.tpl th, table.tpl td { border: 1px solid var(--line); padding: 3px 4px; vertical-align: top; }
+table.tpl th { background: #f1f4f9; font-weight: 600; text-align: center; }
+table.tpl th.week { background: #dde6f7; }
+table.tpl th.bell { text-align: left; white-space: nowrap; min-width: 110px; }
+table.tpl th.bell small { display: block; color: var(--muted); font-weight: normal; }
+table.tpl td { min-width: 96px; }
+table.tpl td.has-mine { background: #fffbeb; }
+.lesson { margin: 0 0 2px; padding: 1px 4px; border-radius: 4px; line-height: 1.25; }
+.lesson small { color: var(--muted); }
+.lesson.mine { background: #fde68a; border: 1px solid #e8b923; }
+.lesson.other { background: #f1f4f9; color: #5b6676; }
+details.bells { margin-top: 12px; }
+details.bells textarea { width: 220px; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+
+/* ───── практика ───── */
+.pdesc { margin: 6px 0 0; font-size: 13px; color: #1f5f3a; }
+.pdesc.warn { color: var(--warn); }
+#planPractices .block, #practiceBlocks .block { margin-bottom: 10px; }
+dialog.wide { width: min(980px, 96vw); max-height: 92vh; overflow: auto; }
+dialog.wide h2 small { color: var(--muted); font-weight: normal; }
+.pgrid { display: grid; grid-template-columns: 1.4fr 1.4fr 90px; gap: 10px; }
+.pgrid .wide2 { grid-column: 1 / -1; }
+.periods { margin: 10px 0 0; }
+.pattern { display: grid; gap: 4px; }
+.patrow { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.patrow b { width: 24px; }
+.pairs { display: inline-flex; gap: 3px; }
+button.pair { width: 28px; padding: 3px 0; }
+button.pair.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.none.on { background: #fee2e2; border-color: #d93025; color: #991b1b; }
+table.pdays { border-collapse: collapse; font-size: 12px; }
+table.pdays th, table.pdays td { border: 1px solid var(--line); padding: 3px 6px; text-align: center; min-width: 74px; }
+table.pdays th.wk { text-align: left; min-width: 70px; } table.pdays th.wk small { display: block; color: var(--muted); font-weight: normal; }
+td.pd { cursor: pointer; } td.pd i { display: block; font-style: normal; font-size: 10px; color: var(--muted); }
+td.pd.on { background: #d1fae5; } td.pd.off { background: #fde4d6; } td.pd.off.on { background: #fcd9a8; }
+td.pd.out { background: #f1f4f9; cursor: default; }
+td.pd.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+td.wkt { background: #f1f4f9; font-weight: 600; }
+.dayedit { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; }
+dialog .ok { color: #15803d; } dialog .warn { color: var(--warn); }
+@media (max-width: 720px) { .pgrid { grid-template-columns: 1fr; } }

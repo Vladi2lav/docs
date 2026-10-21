@@ -124,8 +124,8 @@ export const familyOf = group => {
 };
 
 export function guessStartYear(fileName) {
-  const m = /(20\d\d)\s*[-–/]\s*(20\d\d)/.exec(fileName || '');
-  return m ? Number(m[1]) : null;
+  const m = /(20\d\d)\s*[-–/]\s*(?:20)?(\d\d)(?!\d)/.exec(fileName || '');       // «2026-2027» и «2026-27»
+  return m && Number(m[2]) === (Number(m[1]) + 1) % 100 ? Number(m[1]) : null;
 }
 
 export function parseGraph(sheet, { startYear }) {

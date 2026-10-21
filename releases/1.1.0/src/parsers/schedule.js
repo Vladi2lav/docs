@@ -22,7 +22,7 @@ export function parseSchedule(sheet) {
   let day = 0;
   for (let r = header.row + 1; r < sheet.rowCount; r++) {
     day = dayAt(sheet, r, header.pairCol) || day;
-    if (/^\d+$/.test(sheet.get(r, header.pairCol))) pairRows.push({ r, day, pair: Number(sheet.get(r, header.pairCol)) });
+    if (/^\d+$/.test(sheet.get(r, header.pairCol))) pairRows.push({ r, day, pair: Number(sheet.get(r, header.pairCol)), time: timeAt(sheet, r, header.pairCol) });
   }
 
   const entries = [];
@@ -35,10 +35,21 @@ export function parseSchedule(sheet) {
 
   return {
     entries,
-    semester: detectSemester(sheet, header.row),
+    ...detectMeta(sheet, header.row),
     groups: header.groups.map(g => g.name),
     hasSaturday: entries.some(e => e.day === 6),
   };
+}
+
+// «11:25-12:55» в колонке звонков слева от номера пары → '11:25-12:55'; время — ключ строки в таблице расписания,
+// потому что у курсов своя нумерация пар (у 2 курса 1-я пара в 13:25, у 3 курса — в 08:00)
+const TIME_RE = /(\d{1,2})[:.](\d{2})\s*[-–—]\s*(\d{1,2})[:.](\d{2})/;
+function timeAt(sheet, r, pairCol) {
+  for (let c = 0; c < pairCol; c++) {
+    const m = TIME_RE.exec(sheet.get(r, c));
+    if (m) return `${m[1].padStart(2, '0')}:${m[2]}-${m[3].padStart(2, '0')}:${m[4]}`;
+  }
+  return '';
 }
 
 function findGroupHeader(sheet) {
@@ -82,6 +93,7 @@ function readBlock(sheet, block, endRow, group) {
     .map(t => ({
       day: block.day,
       pair: block.pair,
+      time: block.time,
       group: group.name,
       teacher: t.name,
       week: t.both ? 'both' : (t.side === 0 ? 'left' : 'right'),
@@ -90,13 +102,19 @@ function readBlock(sheet, block, endRow, group) {
     .filter(e => e.subject);
 }
 
-// «… 1 семестр …» в шапке расписания → 1 или 2 (0 — не указано)
-function detectSemester(sheet, headerRow) {
-  for (let r = 0; r < headerRow; r++) {
-    for (let c = 0; c < sheet.colCount; c++) {
-      const m = /([12])\s*[-–]?\s*(?:семестр|жартыжыл)/i.exec(sheet.get(r, c));
-      if (m) return Number(m[1]);
-    }
-  }
-  return 0;
+// Шапка расписания: «Расписание учебных занятий 3 курса на 5 семестр 2026-2027 учебного года».
+// semester — семестр учебного года (1 — осенний, 2 — весенний): 1, 3, 5, 7 → 1; 2, 4, 6, 8 → 2; 0 — не указан.
+function detectMeta(sheet, headerRow) {
+  const text = [];
+  for (let r = 0; r < headerRow; r++) for (let c = 0; c < sheet.colCount; c++) text.push(sheet.get(r, c));
+  const head = text.join(' ');
+  const sem = /(\d)\s*[-–]?\s*(?:семестр|жартыжыл)/i.exec(head);
+  const course = /(\d)\s*[-–]?\s*курс/i.exec(head);
+  const year = /(20\d{2})\s*[-–/]\s*(20\d{2})/.exec(head);
+  return {
+    semester: sem ? (Number(sem[1]) % 2 === 1 ? 1 : 2) : 0,
+    semesterNo: sem ? Number(sem[1]) : 0,
+    course: course ? Number(course[1]) : 0,
+    startYear: year ? Number(year[1]) : 0,
+  };
 }

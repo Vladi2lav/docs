@@ -1,12 +1,20 @@
 // Точка входа: связывает загрузку документов → расчёт → предпросмотр → Word.
 // Вся предметная логика лежит в parsers/, domain/, export/; здесь — состояние и обработчики интерфейса.
 
-import { readSheet } from './util/sheet.js';
-import { parseGraph, guessStartYear, normGroup } from './parsers/graph.js';
-import { PRACTICE_PREFIX } from './config.js';
+import { readSheets } from './util/sheet.js';
+import { parseGraph, guessStartYear, groupKeys, normGroup } from './parsers/graph.js';
+import { HOURS_PER_PAIR, PRACTICE_PREFIX } from './config.js';
 import { parseSchedule } from './parsers/schedule.js';
 import { parsePractice } from './parsers/practice.js';
 import { parsePrevSemester } from './parsers/prev-semester.js';
+import { parseLoad, normIndex } from './parsers/load.js';
+import { applyLoad, loadCandidates, loadLabel, matchLoad, sameGroup, sameTitle } from './domain/load.js';
+import { bellTable, buildGrid, mergeSchedules, parseBells, weeklySummary } from './domain/schedules.js';
+import { describe as describePractice, expandBlock, totalHours } from './domain/practice-days.js';
+import { buildPracticeDocx, shortSigner } from './export/practice-docx.js';
+import { makeCombo } from './ui/combo.js';
+import { renderGrid } from './ui/schedule-grid.js';
+import { openPracticeDialog } from './ui/practice-dialog.js';
 import { applyPrevSemester } from './domain/carryover.js';
 import { annualProblems, buildAnnualEntries, genitiveCollege, groupByLoad } from './domain/annual.js';
 import { buildAnnualDocx } from './export/annual-docx.js';
@@ -18,20 +26,25 @@ import { buildDocx } from './export/docx.js';
 import { esc, renderSheet } from './ui/preview.js';
 import { renderGraph, highlightSet } from './ui/graph-view.js';
 import { renderCalendar } from './ui/calendar-view.js';
-import { ruDate, weekday, ymOf } from './util/dates.js';
+import { ruDate, weekday, ymIndex, ymOf } from './util/dates.js';
 import { MONTH_NAMES, FUNDING } from './config.js';
 import { initReleases, initVersion } from './ui/version.js';
 import { deleteWorkspace, getWorkspace, listWorkspaces, putWorkspace, workspaceFromJson, workspaceToJson } from './util/workspaces.js';
 
 const $ = id => document.getElementById(id);
 const S = {
-  graphSheet: null, graph: null, schedule: null, holidays: { fixed: [], dates: [] },   // заменяется данными из data/holidays-kz.json
+  graphSheet: null, graph: null, holidays: { fixed: [], dates: [] },   // заменяется данными из data/holidays-kz.json
+  schedules: [],                 // { id, file, sheet, buffer, parsed } — по одному на курс (лист книги)
+  schedule: null,                // все расписания вместе: { entries, groups, semester, hasSaturday, warnings }
+  load: null,                    // нагрузка: { rows }
+  signers: { approver: '', upr: '', head: '' },     // подписанты документа практики
+  plan: { groups: null, onlyMine: false, showEmpty: false, bells: '' },   // вкладка «Расписание и практики»
   practices: [],                 // { id, file, data, teacher }
   teacher: '', rows: [], warnings: [],
   transfers: {},                 // педагог → [{ id, rowId, from, to, hours }]
   cal: { overrides: {}, transfers: [], workSaturday: null, swapWeeks: false },   // ручные правки календаря (до обновления страницы)
   result: null, activeMonth: 0,
-  files: { graph: null, schedule: null, prev: null },
+  files: { graph: null, load: null, prev: null },
   prev: null,                    // ведомость 1 семестра: ФИО, специальность, строки (план, выполнено, часы по месяцам)
   extraLoads: {},                // тип нагрузки для строк, которые были только в 1 семестре
   annual: { fullGen: '', collegeGen: '', notes: {} },
@@ -43,21 +56,36 @@ const S = {
   wsId: null, wsName: '', dirty: false, loading: false, savedAt: null,
 };
 const FIELD_IDS = ['fullName', 'specialty', 'dept', 'cmk', 'position'];
+let specialtyCombo = null;
+let groupsCombo = null;
+
+const SOURCES_HTML = `<div class="files">
+  <label class="file"><b>График учебного процесса</b> <small>.xlsx</small>
+    <input type="file" data-src="graph" accept=".xlsx,.xls"><em data-info="graph">не загружен</em></label>
+  <div class="file" data-box="schedule"><b>Расписания занятий</b> <small>.xlsx — по одному на курс, можно несколько</small>
+    <label class="filebtn">+ Добавить расписание<input type="file" data-src="schedule" accept=".xlsx,.xls" multiple hidden></label>
+    <ul class="list slim" data-list="schedule"></ul><em data-info="schedule">не загружено</em></div>
+  <label class="file"><b>Нагрузка</b> <small>.xlsx, необязательно</small>
+    <input type="file" data-src="load" accept=".xlsx,.xls"><em data-info="load">не загружена</em></label>
+  <label class="file"><b>Расписание практики</b> <small>.docx, необязательно</small>
+    <input type="file" data-src="practice" accept=".docx" multiple><em>&nbsp;</em></label></div>`;
 
 init();
 
 async function init() {
+  mountSources();
   resetForm();
+  mountCombos();
 
   document.querySelectorAll('#nav button').forEach(b => { b.onclick = () => showTab(b.dataset.tab); });
-  $('graphFile').onchange = e => loadGraphFile(e.target.files[0]);
-  $('scheduleFile').onchange = e => loadScheduleFile(e.target.files[0]);
-  $('practiceFile').onchange = e => loadPracticeFiles([...e.target.files]).then(() => { e.target.value = ''; });
   $('year').onchange = reparseGraph;
   $('teacher').onchange = e => selectTeacher(e.target.value);
-  $('semester').onchange = recompute;
+  $('planTeacher').onchange = e => selectTeacher(e.target.value);
+  initPlanTab();
+  $('semester').onchange = () => { applyLoadToRows(); renderRows(); recompute(); };
   $('fullName').oninput = () => { $('fullName').classList.remove('bad'); refreshPreview(); };
   for (const id of ['specialty', 'college', 'deputy', 'dept', 'cmk', 'position']) $(id).oninput = refreshPreview;
+  $('specialty').addEventListener('input', refreshPreview);
   $('fillAll').onclick = fillAll;
   $('prAdd').onclick = addPractice;
   $('carry').onchange = recompute;
@@ -81,9 +109,10 @@ async function init() {
 
 // После обновления страницы всё начинается с чистого листа (браузер иначе подставляет прежние значения полей)
 function resetForm() {
-  document.querySelectorAll('input, select').forEach(el => {
+  document.querySelectorAll('input, select, textarea').forEach(el => {
     if (el.type === 'file') el.value = '';
     else if (el.type === 'checkbox') el.checked = el.defaultChecked;
+    else if (el.tagName === 'TEXTAREA') el.value = '';
     else if (el.tagName === 'SELECT') el.selectedIndex = 0;
     else el.value = el.defaultValue;
   });
@@ -92,6 +121,7 @@ function resetForm() {
 function showTab(name) {
   document.querySelectorAll('.tab').forEach(t => { t.hidden = t.id !== `tab-${name}`; });
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  if (name === 'plan') { renderPlan(); renderPracticeBlocks(); }
   if (name === 'graph') renderGraphTab();
   if (name === 'calendar') renderCalendarTab();
 }
@@ -104,13 +134,20 @@ async function loadGraphFile(file) {
 
 async function loadGraphBuffer(name, buffer) {
   try {
-    S.graphSheet = readSheet(XLSX, buffer);
+    S.graphSheet = pickGraphSheet(buffer);
     S.files.graph = { name, buffer };
     const guessed = guessStartYear(name);
     if (guessed && !S.loading) $('year').value = guessed;
-    $('graphInfo').dataset.name = name;
     reparseGraph();
-  } catch (e) { fail('graphInfo', e); }
+  } catch (e) { fail('graph', e); }
+}
+
+// В книге из нескольких листов график — тот лист, где нашлась его таблица
+function pickGraphSheet(buffer) {
+  const sheets = readSheets(XLSX, buffer);
+  if (sheets.length === 1) return sheets[0].sheet;
+  const hit = sheets.find(({ sheet }) => { try { parseGraph(sheet, { startYear: 2000 }); return true; } catch { return false; } });
+  return (hit || sheets[0]).sheet;
 }
 
 function reparseGraph() {
@@ -118,31 +155,78 @@ function reparseGraph() {
   try {
     S.graph = parseGraph(S.graphSheet, { startYear: Number($('year').value) });
     const g = S.graph;
-    $('graphInfo').textContent = `${$('graphInfo').dataset.name}: ${g.weeks.length} нед., ${Object.keys(g.groups).length} групп`;
-    $('graphInfo').className = 'ok';
+    setInfo('graph', `${S.files.graph.name}: ${g.weeks.length} нед., ${Object.keys(g.groups).length} групп`, true);
     if (g.college) $('college').value = g.college;
     if (g.deputy) $('deputy').value = g.deputy;
-    $('specialties').innerHTML = g.specialties.map(s => `<option value="${esc(s)}">`).join('');
-    afterInputsChanged();
-  } catch (e) { S.graph = null; fail('graphInfo', e); }
+    updateSpecialtyOptions();
+    rebuildSchedule();
+  } catch (e) { S.graph = null; fail('graph', e); }
 }
 
-async function loadScheduleFile(file) {
-  if (file) await loadScheduleBuffer(file.name, await file.arrayBuffer());
+// Расписания: несколько файлов (по курсам), а в одной книге — несколько листов
+async function addScheduleFiles(files) {
+  for (const file of files) {
+    try { addScheduleBuffer(file.name, await file.arrayBuffer()); } catch (e) { showMessage(e.message, true); }
+  }
+  rebuildSchedule();
 }
 
-async function loadScheduleBuffer(name, buffer) {
-  try {
-    S.schedule = parseSchedule(readSheet(XLSX, buffer));
-    S.files.schedule = { name, buffer };
-    S.schedule.semester ||= Number(/([12])\s*сем/i.exec(name)?.[1] || 0);
-    $('scheduleInfo').textContent = `${name}: ${S.schedule.groups.length} групп, ${teacherNames(S.schedule.entries).length} педагогов`;
-    $('scheduleInfo').className = 'ok';
-    $('teacher').innerHTML = '<option value="">— выберите педагога —</option>' +
-      teacherNames(S.schedule.entries).map(n => `<option>${esc(n)}</option>`).join('');
-    S.teacher = '';
-    afterInputsChanged();
-  } catch (e) { S.schedule = null; fail('scheduleInfo', e); }
+const sheetsCache = new WeakMap();
+const sheetsOf = buffer => {
+  if (!sheetsCache.has(buffer)) sheetsCache.set(buffer, readSheets(XLSX, buffer));
+  return sheetsCache.get(buffer);
+};
+
+// onlySheet — имя листа (при восстановлении рабочей области); first — только первый лист (рабочие области версии 1.0)
+function addScheduleBuffer(file, buffer, { onlySheet = null, first = false } = {}) {
+  S.schedules = S.schedules.filter(s => s.file !== file || (onlySheet && s.sheet !== onlySheet));    // тот же файл загружен заново — заменяется
+  const sheets = sheetsOf(buffer);
+  let added = 0;
+  let firstError = '';
+  for (const { name: sheetName, sheet } of first ? sheets.slice(0, 1) : sheets) {
+    if (onlySheet && sheetName !== onlySheet) continue;
+    try {
+      const parsed = parseSchedule(sheet);
+      parsed.semester ||= Number(/([12])\s*сем/i.exec(file)?.[1] || 0);
+      S.schedules.push({ id: `${Date.now()}${S.schedules.length}`, file, sheet: sheetName, buffer, parsed });
+      added++;
+    } catch (e) { firstError ||= e.message; }
+  }
+  if (!added) throw new Error(`${file}: ${firstError || 'расписание не найдено'}`);
+}
+
+function rebuildSchedule() {
+  S.schedule = S.schedules.length
+    ? mergeSchedules(S.schedules.map(s => ({ name: scheduleLabel(s), parsed: s.parsed })), { graphYear: S.graph?.startYear || 0 })
+    : null;
+  renderScheduleList();
+  const names = S.schedule ? teacherNames(S.schedule.entries) : [];
+  fillTeacherSelects(names);
+  if (S.teacher && !names.includes(S.teacher)) S.teacher = '';
+  syncBells();
+  afterInputsChanged();
+}
+
+const scheduleLabel = s => (S.schedules.filter(x => x.file === s.file).length > 1 ? `${s.file} · ${s.sheet}` : s.file);
+
+function renderScheduleList() {
+  const info = S.schedule
+    ? `${S.schedules.length} расписан., ${S.schedule.groups.length} групп, ${teacherNames(S.schedule.entries).length} педагогов`
+    : 'не загружено';
+  setInfo('schedule', info, !!S.schedule);
+  document.querySelectorAll('[data-list="schedule"]').forEach(ul => {
+    ul.innerHTML = S.schedules.map(s => `<li data-id="${s.id}"><span class="grow"><b>${esc(scheduleLabel(s))}</b>
+      <small>${s.parsed.course ? `${s.parsed.course} курс` : 'курс не указан'}${s.parsed.semesterNo ? `, ${s.parsed.semesterNo} семестр` : ''}${s.parsed.startYear ? `, ${s.parsed.startYear}–${s.parsed.startYear + 1}` : ''} · групп ${s.parsed.groups.length}</small></span>
+      <button type="button" title="Убрать расписание">✕</button></li>`).join('');
+    ul.querySelectorAll('li').forEach(li => {
+      li.querySelector('button').onclick = () => { S.schedules = S.schedules.filter(x => x.id !== li.dataset.id); rebuildSchedule(); };
+    });
+  });
+}
+
+function fillTeacherSelects(names) {
+  const options = '<option value="">— выберите педагога —</option>' + names.map(n => `<option>${esc(n)}</option>`).join('');
+  for (const id of ['teacher', 'planTeacher']) { $(id).innerHTML = options; $(id).value = names.includes(S.teacher) ? S.teacher : ''; }
 }
 
 async function loadPracticeFiles(files) {
@@ -163,6 +247,8 @@ function afterInputsChanged() {
     for (const p of S.practices) if (!p.teacher) p.teacher = matchSupervisor(names, p.data.supervisor) || '';
   }
   renderPractices();
+  fillSigners();
+  updateSpecialtyOptions();
   if (S.teacher) selectTeacher(S.teacher, { fresh: true, keepFields: true });   // документы изменились — строки собираются заново
   else { recompute(); }
 }
@@ -194,8 +280,10 @@ function stashTeacher() {
 function selectTeacher(name, { fresh = false, keepFields = false } = {}) {
   stashTeacher();
   if (fresh) delete S.teacherStates[name];
+  if (S.teacher !== name) S.plan.groups = null;          // таблица недели по умолчанию показывает группы педагога
   S.teacher = name;
   $('teacher').value = name;
+  $('planTeacher').value = name;
   S.rows = []; S.warnings = [];
   if (name && S.graph && S.schedule) {
     const saved = S.teacherStates[name];
@@ -213,6 +301,7 @@ function selectTeacher(name, { fresh = false, keepFields = false } = {}) {
       if (S.rows.length && !S.rows.some(isVisible)) S.funding = S.funding === 'grant' ? 'comm' : 'grant';
     }
   }
+  applyLoadToRows();
   renderRows();
   renderPracticeBlocks();
   recompute();
@@ -228,6 +317,11 @@ function renderRows() {
       ? `<select data-f="moduleIndex"><option value="">— без модуля —</option>${r.moduleIndex && !known ? `<option value="${esc(r.moduleIndex)}" selected>${esc(r.moduleIndex)}</option>` : ''}${mods.map(m =>
           `<option value="${esc(m.index)}"${m.index === r.moduleIndex ? ' selected' : ''}>${esc(m.index)} ${esc(m.title)}</option>`).join('')}</select>`
       : `<input data-f="moduleIndex" value="${esc(r.moduleIndex)}" placeholder="нет в графике">`;
+    const semIdx = Number($('semester').value);
+    const loadCell = S.load
+      ? `<td class="ld"><select data-f="load"><option value="">—</option>${loadCandidates(S.load, r.group, semIdx).map(c =>
+          `<option value="${c.i}"${c.i === r.loadIndex ? ' selected' : ''}>${esc(loadLabel(c, semIdx))}</option>`).join('')}</select></td>`
+      : '<td class="ld"></td>';
     return `<tr data-i="${i}">
       <td>${r.kind === 'practice' ? 'практика' : 'теория'}</td>
       <td>${indexCell}</td>
@@ -235,6 +329,7 @@ function renderRows() {
       <td><input data-f="group" value="${esc(r.group)}"></td>
       <td><input data-f="plan" type="number" min="0" value="${r.plan ?? ''}"></td>
       <td class="s2"><input data-f="base" type="number" min="0" value="${r.base ?? ''}"></td>
+      ${loadCell}
       <td><button type="button" title="Убрать из ведомости">✕</button></td></tr>`;
   }).join('');
 
@@ -244,6 +339,7 @@ function renderRows() {
     tr.querySelectorAll('input[data-f]').forEach(input => {
       input.oninput = () => {
         row[input.dataset.f] = ['plan', 'base'].includes(input.dataset.f) ? (input.value === '' ? null : Number(input.value)) : input.value;
+        if (input.dataset.f === 'plan') row.planFromLoad = false;           // введённое вручную больше не заменяется нагрузкой
         recompute();
       };
     });
@@ -259,8 +355,19 @@ function renderRows() {
     if (indexField.tagName === 'SELECT') indexField.onchange = onIndex;
     else indexField.onchange = () => { row.moduleIndex = indexField.value.trim(); recompute(); };
     indexField.oninput = indexField.tagName === 'SELECT' ? null : () => { row.moduleIndex = indexField.value; recompute(); };
+    const loadSelect = tr.querySelector('select[data-f="load"]');
+    if (loadSelect) {
+      loadSelect.onchange = () => {
+        const sem = Number($('semester').value);
+        row.loadIndex = loadSelect.value === '' ? null : Number(loadSelect.value);
+        const src = row.loadIndex != null && S.load.rows[row.loadIndex].sems[sem];
+        if (src) { row.plan = src.total; row.planFromLoad = true; tr.querySelector('[data-f="plan"]').value = src.total; }
+        renderPracticeBlocks(); recompute();
+      };
+    }
     tr.querySelector('button').onclick = () => { S.rows.splice(Number(tr.dataset.i), 1); renderRows(); renderPracticeBlocks(); recompute(); };
   });
+  $('rowsTable').classList.toggle('no-load', !S.load);
   $('trRow').innerHTML = visibleRows().filter(r => r.kind === 'theory').map(r => `<option value="${r.id}">${esc(r.name)} (${esc(r.group)})</option>`).join('');
   $('prAdd').disabled = !(S.teacher && S.graph);
 }
@@ -280,6 +387,7 @@ function fillAll() {
   if (S.graph.college) $('college').value = S.graph.college;
   if (S.graph.deputy) $('deputy').value = S.graph.deputy;
   if (practiceSpecialty) $('specialty').value = practiceSpecialty;
+  fillSigners(true);
   selectTeacher(S.teacher, { fresh: true, keepFields: true });      // строки собираются заново: возвращаются удалённые, сбрасываются правки
   const empty = document.querySelectorAll('.need').length;
   const time = new Date().toLocaleTimeString('ru-RU');
@@ -293,45 +401,196 @@ function markRequired() {
   $('teacher').classList.toggle('need', !S.teacher && !!S.schedule);
   const sem2 = $('semester').value === '1';
   $('prevBox').classList.toggle('need', sem2 && !S.prev);
-  $('scheduleBox').classList.toggle('need', sem2 && !!S.schedule?.semester && S.schedule.semester !== 2);
-  for (const id of ['fullName', 'specialty', 'college', 'deputy']) $(id).classList.toggle('need', ready && !$(id).value.trim());
+  document.querySelectorAll('[data-box="schedule"]').forEach(el => el.classList.toggle('need', sem2 && !!S.schedule?.semester && S.schedule.semester !== 2));
+  for (const id of ['fullName', 'college', 'deputy']) $(id).classList.toggle('need', ready && !$(id).value.trim());
+  specialtyCombo.setNeed(ready && !$('specialty').value.trim());
   $('rowsTable').querySelectorAll('tr[data-i]').forEach(tr => {
     const row = S.rows[Number(tr.dataset.i)];
     tr.querySelectorAll('input, select').forEach(el => {
-      const optional = el.dataset.f === 'moduleIndex' && row.kind === 'theory';   // у теории (например, физкультура) модуля может не быть
+      const optional = el.dataset.f === 'load' || (el.dataset.f === 'moduleIndex' && row.kind === 'theory');   // у теории (например, физкультура) модуля может не быть
       const skip = el.dataset.f === 'base' && !sem2;
       const unknownGroup = el.dataset.f === 'group' && !!S.graph && el.value.trim() !== '' && !S.graph.hasGroup(el.value);
       el.classList.toggle('need', (ready && !optional && !skip && el.value.trim() === '') || unknownGroup);
     });
   });
-  $('practiceBlocks').querySelectorAll('input[data-f="hoursPerDay"]').forEach(input => {
+  document.querySelectorAll('.block input[data-f="hoursPerDay"]').forEach(input => {
     input.classList.toggle('need', !(Number(input.value) > 0));
   });
 }
 
-// Блоки практики: период × часов в день либо точные часы по датам (из docx)
+// ───────── нагрузка, подписанты, поля с выбором ─────────
+
+function mountSources() {
+  for (const host of [$('sourcesMain'), $('sourcesPlan')]) {
+    host.innerHTML = SOURCES_HTML;
+    host.querySelector('[data-src="graph"]').onchange = e => loadGraphFile(e.target.files[0]);
+    host.querySelector('[data-src="schedule"]').onchange = e => { addScheduleFiles([...e.target.files]).then(() => { e.target.value = ''; }); };
+    host.querySelector('[data-src="load"]').onchange = e => loadLoadFile(e.target.files[0]);
+    host.querySelector('[data-src="practice"]').onchange = e => loadPracticeFiles([...e.target.files]).then(() => { e.target.value = ''; });
+  }
+}
+
+// Подпись у файла одного вида — на обеих вкладках сразу
+const setInfo = (kind, text, ok) => document.querySelectorAll(`[data-info="${kind}"]`).forEach(el => { el.textContent = text; el.className = ok ? 'ok' : ''; });
+
+function mountCombos() {
+  specialtyCombo = makeCombo($('specialtyCombo'), {
+    placeholder: 'Выберите специальность или впишите свою',
+    onChange: () => $('specialty').dispatchEvent(new Event('input', { bubbles: true })),
+  });
+  // скрытое поле остаётся «источником правды» для остального кода: чтение отдаёт значения через запятую
+  Object.defineProperty($('specialty'), 'value', { get: () => specialtyCombo.text, set: v => specialtyCombo.setText(v), configurable: true });
+  groupsCombo = makeCombo($('planGroups'), {
+    placeholder: 'Выберите группы', allowCustom: false,
+    onChange: items => { S.plan.groups = items; markDirty(); renderPlan(); },
+  });
+}
+
+const specialtyOptions = () => [...new Set([
+  ...(S.graph?.specialties || []),
+  ...S.practices.flatMap(p => [p.data.specialtyOnly, p.data.qualification]).filter(Boolean),
+])];
+const updateSpecialtyOptions = () => specialtyCombo.setOptions(specialtyOptions());
+
+// Подписанты документа практики: из загруженных документов практики (force — перезаписать введённое)
+function fillSigners(force = false) {
+  const docs = S.practices.map(p => p.data.signers).filter(Boolean);
+  for (const k of ['approver', 'upr', 'head']) {
+    const found = docs.map(d => d[k]).find(Boolean);
+    if (found && (force || !S.signers[k])) S.signers[k] = found;
+  }
+  for (const [id, k] of [['sgApprover', 'approver'], ['sgUpr', 'upr'], ['sgHead', 'head']]) {
+    if ($(id) !== document.activeElement) $(id).value = S.signers[k] || '';
+  }
+}
+
+// ───────── нагрузка ─────────
+
+async function loadLoadFile(file) {
+  if (file) await loadLoadBuffer(file.name, await file.arrayBuffer());
+}
+
+async function loadLoadBuffer(name, buffer) {
+  try {
+    const sheets = readSheets(XLSX, buffer);
+    let parsed = null;
+    let sheetName = '';
+    let lastError = null;
+    for (const { name: n, sheet } of sheets) {
+      try { parsed = parseLoad(sheet); sheetName = n; break; } catch (e) { lastError = e; }
+    }
+    if (!parsed) throw lastError || new Error('В файле не найдена нагрузка');
+    S.load = parsed;
+    S.files.load = { name, buffer };
+    setInfo('load', `${name}${sheets.length > 1 ? ` · ${sheetName}` : ''}: строк нагрузки ${parsed.rows.length}`, true);
+    applyLoadToRows();
+    renderRows(); renderPracticeBlocks(); recompute();
+  } catch (e) { S.load = null; S.files.load = null; fail('load', e); renderRows(); }
+}
+
+// План из нагрузки подставляется только в пустые поля (введённое вручную не трогается);
+// подставленное ранее пересчитывается при смене семестра. В 2 семестре с загруженной ведомостью 1 семестра план берётся из неё.
+function applyLoadToRows() {
+  if (!S.load || !S.rows.length) return;
+  const idx = Number($('semester').value);
+  if (S.prev && idx === 1) return;
+  for (const r of S.rows) if (r.planFromLoad) r.plan = null;
+  applyLoad(S.rows, S.load, idx);
+}
+
+// ───────── вкладка «Расписание и практики» ─────────
+
+function initPlanTab() {
+  for (const [id, k] of [['sgApprover', 'approver'], ['sgUpr', 'upr'], ['sgHead', 'head']]) $(id).oninput = () => { S.signers[k] = $(id).value; };
+  $('planOnlyMine').onchange = () => { S.plan.onlyMine = $('planOnlyMine').checked; renderPlan(); };
+  $('planShowEmpty').onchange = () => { S.plan.showEmpty = $('planShowEmpty').checked; renderPlan(); };
+  $('planMine').onclick = () => { S.plan.groups = null; renderPlan(); };
+  $('planSwap').onclick = () => { S.cal.swapWeeks = !S.cal.swapWeeks; recompute(); };
+  $('planPrAdd').onclick = addPractice;
+  $('bellsText').oninput = () => { S.plan.bells = $('bellsText').value; S.plan.bellsManual = true; renderPlan(); };
+  $('bellsAuto').onclick = () => { S.plan.bellsManual = false; syncBells(); renderPlan(); };
+}
+
+// Звонки: из расписаний, пока пользователь не правил список вручную
+function syncBells() {
+  if (!S.plan.bellsManual) S.plan.bells = bellTable(S.schedule?.entries || []).join('\n');
+  $('bellsText').value = S.plan.bells;
+}
+
+function currentBells() {
+  const typed = S.plan.bellsManual ? parseBells(S.plan.bells) : [];
+  return typed.length ? typed : bellTable(S.schedule?.entries || []);
+}
+
+const teacherGroups = () => (S.schedule && S.teacher ? [...new Set(S.schedule.entries.filter(e => e.teacher === S.teacher).map(e => e.group))] : []);
+
+function renderPlan() {
+  const entries = S.schedule?.entries || [];
+  $('planOnlyMine').checked = !!S.plan.onlyMine;
+  $('planShowEmpty').checked = !!S.plan.showEmpty;
+  $('planSwap').textContent = $('swapWeeks').textContent;
+  $('bellsInfo').textContent = S.plan.bellsManual ? 'список задан вручную' : `собрано из расписаний: ${currentBells().length} звонков`;
+  groupsCombo.setOptions(S.schedule?.groups || []);
+  const groups = S.plan.groups ?? teacherGroups();
+  groupsCombo.items = groups;
+  renderPracticeBlocks();
+
+  if (!entries.length) {
+    $('planGrid').innerHTML = '<p class="hint">Загрузите расписание (можно несколько — по одному на курс) и выберите педагога.</p>';
+    $('planSummary').innerHTML = '';
+    return;
+  }
+  const grid = buildGrid({ entries, bells: currentBells(), teacher: S.teacher, groups: groups.length ? groups : null, onlyMine: S.plan.onlyMine && !!S.teacher });
+  renderGrid($('planGrid'), grid, { showEmpty: S.plan.showEmpty, swap: !!S.cal.swapWeeks });
+
+  const rows = S.teacher ? weeklySummary(entries, S.teacher) : [];
+  const h = n => `${n} пар · ${n * HOURS_PER_PAIR} ч`;
+  const left = rows.reduce((a, r) => a + r.left, 0);
+  const right = rows.reduce((a, r) => a + r.right, 0);
+  $('planSummary').innerHTML = rows.length
+    ? `<h3>Занятия педагога в неделю</h3><table class="rows"><thead><tr><th>Группа</th><th>Дисциплина</th><th>Левая неделя</th><th>Правая неделя</th></tr></thead><tbody>${
+      rows.map(r => `<tr><td>${esc(r.group)}</td><td>${esc(r.subject)}</td><td>${h(r.left)}</td><td>${h(r.right)}</td></tr>`).join('')
+    }<tr><th colspan="2">Всего</th><th>${h(left)}</th><th>${h(right)}</th></tr></tbody></table>`
+    : '';
+}
+
+// ───────── практика: карточки, расширенный вид, документ ─────────
+
+// Календарь практики: суббота — рабочий день (практика идёт и по субботам); праздники и правки календаря учитываются
+const practiceCalendar = () => createCalendar({ holidays: S.holidays, state: S.cal, workSaturday: true, years: calendarYears() });
+
+const fundingLabel = row => ({ grant: 'грант', comm: 'коммерция' }[fundingOfRow(row)] || 'группы нет в графике');
+
 function renderPracticeBlocks() {
-  const rows = visibleRows().filter(r => r.kind === 'practice');
-  $('practiceBlocks').innerHTML = rows.map(r => `<div class="block" data-id="${r.id}">
-    <b>${esc(r.name)}</b> <small>(${esc(r.group)})</small>
+  fillPracticeCards($('practiceBlocks'), visibleRows().filter(r => r.kind === 'practice'), false);
+  fillPracticeCards($('planPractices'), S.teacher ? S.rows.filter(r => r.kind === 'practice') : [], true);
+  refreshPracticeSummaries();
+  renderSuggestions();
+}
+
+// Блок практики: период × часов в день (простой режим) либо точные дни по парам (расширенный вид, документ практики)
+function fillPracticeCards(container, rows, onPlanTab) {
+  container.innerHTML = rows.length ? rows.map(r => `<div class="block" data-id="${r.id}">
+    <b>${esc(r.name)}</b> <small>(${esc(r.group)}${onPlanTab ? ` · ${fundingLabel(r)}` : ''})</small>
     ${r.blocks.map((b, i) => b.days
-      ? `<div class="row" data-b="${i}">по документу: ${ruDate(b.from)} – ${ruDate(b.to)} <button type="button" data-act="del">✕</button></div>`
+      ? `<div class="row" data-b="${i}">по дням: ${ruDate(b.from)} – ${ruDate(b.to)}, ${Object.values(b.days).reduce((a, h) => a + h, 0)} ч <button type="button" data-act="del">✕</button></div>`
       : `<div class="row" data-b="${i}">с <input type="date" data-f="from" value="${b.from}"> по <input type="date" data-f="to" value="${b.to}">
           <input type="number" data-f="hoursPerDay" min="0" value="${b.hoursPerDay}" style="width:70px"> ч/день <b class="star">*</b>
           <label class="inline"><input type="checkbox" data-f="saturday"${b.saturday ? ' checked' : ''}> и суббота</label>
           <button type="button" data-act="del">✕</button></div>`).join('')}
     <div class="row"><button type="button" data-act="add">+ период</button>
-      <button type="button" data-act="graph">Периоды из графика</button></div></div>`).join('');
+      <button type="button" data-act="graph">Периоды из графика</button>
+      <button type="button" data-act="open" class="primary">Расширенный вид</button>
+      <button type="button" data-act="doc">Документ практики (.docx)</button></div>
+    <p class="pdesc" data-desc></p></div>`).join('')
+    : (onPlanTab ? '<p class="hint">У выбранного педагога пока нет практики: добавьте из списка ниже или кнопкой «+ Практика».</p>' : '');
 
-  $('practiceBlocks').querySelectorAll('.block').forEach(box => {
+  container.querySelectorAll('.block').forEach(box => {
     const row = S.rows.find(r => r.id === box.dataset.id);
     box.querySelectorAll('.row[data-b]').forEach(line => {
       const b = row.blocks[Number(line.dataset.b)];
       line.querySelectorAll('input').forEach(input => {
-        input.oninput = () => {
-          b[input.dataset.f] = input.type === 'checkbox' ? input.checked : (input.dataset.f === 'hoursPerDay' ? input.value : input.value);
-          recompute();
-        };
+        input.oninput = () => { b[input.dataset.f] = input.type === 'checkbox' ? input.checked : input.value; recompute(); };
       });
       line.querySelector('[data-act="del"]').onclick = () => { row.blocks.splice(Number(line.dataset.b), 1); renderPracticeBlocks(); recompute(); };
     });
@@ -347,7 +606,122 @@ function renderPracticeBlocks() {
       row.blocks = periods;
       renderPracticeBlocks(); recompute();
     };
+    box.querySelector('[data-act="open"]').onclick = () => openPractice(row);
+    box.querySelector('[data-act="doc"]').onclick = () => downloadPracticeDoc(row, row.blocks.map(b => expandBlock(b, practiceCalendar())), practiceDocMeta(row));
   });
+}
+
+// Под карточкой: «пн 4-6 пара, вт 4-6 пара … — всего N ч · по нагрузке M ч: ✓ / ⚠»
+function refreshPracticeSummaries() {
+  const calendar = practiceCalendar();
+  document.querySelectorAll('.block[data-id]').forEach(box => {
+    const row = S.rows.find(r => r.id === box.dataset.id);
+    const el = box.querySelector('[data-desc]');
+    if (!row || !el) return;
+    const blocks = row.blocks.map(b => expandBlock(b, calendar));
+    const total = totalHours(blocks);
+    const desc = describePractice(blocks);
+    const sem = S.load && row.loadIndex != null ? S.load.rows[row.loadIndex]?.sems[Number($('semester').value)] : null;
+    const cmp = sem ? ` · по нагрузке ${sem.total} ч${sem.weeks && sem.perWeek ? ` (${sem.weeks} нед × ${sem.perWeek})` : ''}: ${sem.total === total ? '✓ совпадает' : `⚠ разница ${total - sem.total} ч`}` : '';
+    el.textContent = `${desc ? `${desc} — ` : ''}всего ${total} ч${cmp}`;
+    el.classList.toggle('warn', !!sem && sem.total !== total);
+  });
+}
+
+const courseOfGroup = group => S.schedules.find(s => s.parsed.groups.some(g => sameGroup(g, group)))?.parsed.course || '';
+
+// Реквизиты документа практики: введённые ранее → из загруженного документа практики → из специальностей педагога и графика
+function practiceDocMeta(row) {
+  const doc = row.doc || {};
+  const imported = S.practices.find(p => p.teacher === S.teacher && sameGroup(p.data.group, row.group) && p.data.moduleIndex === row.moduleIndex)?.data;
+  const items = specialtyCombo.items;
+  const mod = S.graph && S.graph.moduleOf(row.group, row.moduleIndex);
+  return {
+    specialty: doc.specialty ?? imported?.specialtyOnly ?? items.find(s => /^\d{8}\b/.test(s)) ?? '',
+    qualification: doc.qualification ?? imported?.qualification ?? items.find(s => /^[34][SW]\d{8}/.test(s)) ?? '',
+    course: doc.course ?? imported?.course ?? courseOfGroup(row.group),
+    moduleLine: doc.moduleLine ?? (mod ? `${mod.index} ${mod.title}` : [row.moduleIndex, row.name.replace(/^УП\s*-\s*/i, '')].filter(Boolean).join(' ')),
+  };
+}
+
+function openPractice(row) {
+  const sem = S.load && row.loadIndex != null ? S.load.rows[row.loadIndex]?.sems[Number($('semester').value)] : null;
+  openPracticeDialog($('prDialog'), {
+    row, graph: S.graph, calendar: practiceCalendar(), bells: currentBells(), doc: practiceDocMeta(row), specialties: specialtyOptions(),
+    loadInfo: sem ? { weeks: sem.weeks, perWeek: sem.perWeek, total: sem.total } : null,
+    onSave: (blocks, doc) => {
+      row.blocks = blocks;
+      row.doc = { ...doc };
+      renderPracticeBlocks(); recompute();
+    },
+    onDownload: (blocks, doc) => downloadPracticeDoc(row, blocks, doc),
+  });
+}
+
+async function downloadPracticeDoc(row, blocks, doc) {
+  const y = S.graph.startYear;
+  const meta = {
+    college: $('college').value.trim(), yearLabel: `${y}-${y + 1}`, startYear: y,
+    group: row.group, course: doc.course, specialty: doc.specialty, qualification: doc.qualification, moduleLine: doc.moduleLine,
+    supervisor: shortSigner($('fullName').value.trim() || S.teacher), approver: S.signers.approver || $('deputy').value.trim(),
+    upr: S.signers.upr, head: S.signers.head,
+  };
+  const blob = await buildPracticeDocx(JSZip, meta, blocks.filter(b => Object.keys(b.days || {}).length), practiceCalendar());
+  download_(blob, `Расписание_практики_${row.group.replace(/[\\/]/g, '-')}_${row.moduleIndex || 'УП'}.docx`);
+}
+
+// Практики, которые есть в графике для групп педагога или в нагрузке, но ещё не добавлены в ведомость
+function practiceSuggestions() {
+  if (!S.graph || !S.teacher) return [];
+  const semIdx = Number($('semester').value);
+  const groups = [...new Set(S.rows.filter(r => r.kind === 'theory').map(r => r.group))];
+  const key = (g, index) => `${groupKeys(g).join('/')}|${normIndex(index)}`;
+  const have = new Set(S.rows.filter(r => r.kind === 'practice').map(r => key(r.group, r.moduleIndex)));
+  const out = [];
+  if (S.load) {
+    // нагрузка точно говорит, какие модули у групп педагога; период — из графика (тот же индекс, иначе то же название)
+    S.load.rows.forEach((lr, i) => {
+      const g = lr.moduleIndex && lr.sems[semIdx] && groups.find(x => sameGroup(x, lr.group));
+      if (!g) return;
+      const legend = Object.values(S.graph.legendFor(g) || {});
+      const mod = legend.find(m => normIndex(m.index) === lr.moduleIndex) || legend.find(m => sameTitle(m.title, lr.title));
+      out.push({ group: g, moduleIndex: mod ? mod.index : lr.moduleIndex, title: mod ? mod.title : lr.title, loadIndex: i, loadModule: lr.moduleIndex, from: 'нагрузка' });
+    });
+  } else {
+    for (const g of groups) {
+      for (const [code, m] of Object.entries(S.graph.legendFor(g) || {})) {
+        if (m.index && S.graph.runsOf(g, code).length) out.push({ group: g, moduleIndex: m.index, title: m.title, from: 'график' });
+      }
+    }
+  }
+  const list = out.filter(s => !have.has(key(s.group, s.moduleIndex)));
+  // период практики — только те, что приходятся на выбранный семестр (график охватывает весь год)
+  const sem = S.graph.semesters(groups)[semIdx];
+  const inSemester = r => !sem || (ymIndex(ymOf(r.from)) >= ymIndex(sem.from) && ymIndex(ymOf(r.from)) <= ymIndex(sem.to));
+  for (const s of list) s.runs = graphPeriods(S.graph, s.group, s.moduleIndex).filter(inSemester);
+  return list;
+}
+
+function renderSuggestions() {
+  const list = practiceSuggestions();
+  const periods = s => (s.runs.length ? ` (${s.runs.map(r => `${ruDate(r.from).slice(0, 5)}–${ruDate(r.to).slice(0, 5)}`).join(', ')})` : ' (период в графике не найден)');
+  $('planSuggest').innerHTML = list.length
+    ? `<h3>Практики по документам для групп педагога</h3><p class="hint">${S.load ? 'Из нагрузки; период — из графика.' : 'Из графика (загрузите нагрузку — останутся только модули педагога).'} Кто ведёт практику, документы не говорят — добавьте нужные.</p><div class="row">${
+      list.map((s, i) => `<button type="button" data-i="${i}">+ ${esc(s.group)} · ${esc(s.moduleIndex)} ${esc(s.title.slice(0, 40))}${s.loadModule && s.loadModule !== normIndex(s.moduleIndex) ? ` <small>(в нагрузке ${esc(s.loadModule)})</small>` : ''}${periods(s)}</button>`).join('')}</div>`
+    : '';
+  $('planSuggest').querySelectorAll('button').forEach(b => { b.onclick = () => addSuggestedPractice(list[Number(b.dataset.i)]); });
+}
+
+function addSuggestedPractice(s) {
+  const row = emptyPracticeRow({ id: `p${Date.now()}`, group: s.group, start: S.graph.weeks[0].start });
+  row.moduleIndex = s.moduleIndex;
+  row.name = PRACTICE_PREFIX + s.title;
+  if (s.runs.length) row.blocks = s.runs;
+  if (s.loadIndex != null) row.loadIndex = s.loadIndex;
+  row.defaults = { ...row.defaults, moduleIndex: row.moduleIndex, name: row.name, blocks: row.blocks.map(b => ({ ...b })) };
+  S.rows.push(row);
+  applyLoadToRows();
+  renderRows(); renderPracticeBlocks(); recompute();
 }
 
 // ───────── переносы и отработки занятий ─────────
@@ -424,7 +798,7 @@ function currentPeriod() {
 function recompute() {
   markDirty();
   S.result = null;
-  const problems = [...S.warnings];
+  const problems = [...S.warnings, ...(S.schedule?.warnings || [])];
   const period = currentPeriod();
   $('workSat').checked = workSaturday();
 
@@ -474,6 +848,8 @@ function recompute() {
   showMessage(problems.join('\n'));
   renderTransfers();
   renderAnnual();
+  refreshPracticeSummaries();
+  if (!$('tab-plan').hidden) renderPlan();
   S.activeMonth = Math.min(S.activeMonth, Math.max(0, (S.result?.sheets.length || 1) - 1));
   refreshPreview();
 }
@@ -605,12 +981,14 @@ function afterCalendarChanged() {
 // ───────── мелочи ─────────
 
 function showMessage(text, isError = false) {
-  $('messages').innerHTML = text ? text.split('\n').map(t => `<p class="${isError ? 'err' : ''}">${esc(t)}</p>`).join('') : '';
+  const html = text ? text.split('\n').map(t => `<p class="${isError ? 'err' : ''}">${esc(t)}</p>`).join('') : '';
+  $('messages').innerHTML = html;
+  $('planMessages').innerHTML = html;
 }
 
-function fail(infoId, error) {
-  $(infoId).textContent = 'ошибка';
-  $(infoId).className = '';
+// kind — 'graph' | 'schedule' | 'load': подпись «ошибка» у файла (на обеих вкладках) и текст ошибки
+function fail(kind, error) {
+  setInfo(kind, 'ошибка', false);
   showMessage(error.message, true);
 }
 
@@ -634,7 +1012,10 @@ function snapshot() {
   return {
     version: 1,
     year: $('year').value,
-    files: { graph: S.files.graph, schedule: S.files.schedule, prev: S.files.prev },
+    files: { graph: S.files.graph, load: S.files.load, prev: S.files.prev },
+    schedules: S.schedules.map(s => ({ file: s.file, sheet: s.sheet, buffer: s.buffer })),
+    signers: S.signers,
+    plan: S.plan,
     extraLoads: S.extraLoads,
     annual: S.annual,
     practices: S.practices.map(p => ({ file: p.file, buffer: p.buffer, teacher: p.teacher })),
@@ -656,7 +1037,15 @@ async function applySnapshot(d) {
     if (d.files.graph) await loadGraphBuffer(d.files.graph.name, d.files.graph.buffer);
     S.practices = [];
     for (const p of d.practices || []) await addPracticeBuffer(p.file, p.buffer, p.teacher);
-    if (d.files.schedule) await loadScheduleBuffer(d.files.schedule.name, d.files.schedule.buffer);
+    S.schedules = [];
+    // рабочие области версии 1.0 хранят одно расписание в files.schedule (первый лист)
+    for (const s of d.schedules || (d.files.schedule ? [{ file: d.files.schedule.name, sheet: null, buffer: d.files.schedule.buffer }] : [])) {
+      try { addScheduleBuffer(s.file, s.buffer, s.sheet ? { onlySheet: s.sheet } : { first: true }); } catch (e) { showMessage(e.message, true); }
+    }
+    S.signers = d.signers || S.signers;
+    S.plan = { ...S.plan, ...(d.plan || {}) };
+    if (d.files.load) await loadLoadBuffer(d.files.load.name, d.files.load.buffer);
+    rebuildSchedule();
     S.teacherStates = d.teacherStates || {};
     S.extraLoads = d.extraLoads || {};
     S.annual = d.annual || { fullGen: '', collegeGen: '', notes: {} };

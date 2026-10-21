@@ -42,7 +42,7 @@ export function buildRows({ teacher, entries, graph, practiceDocs }) {
     const mod = graph.moduleOf(doc.group, doc.moduleIndex);
     let blocks;
     if (Object.keys(doc.days).some(d => d >= range.from && d <= range.to)) {
-      blocks = [{ from: doc.from, to: doc.to, days: doc.days, fromDoc: true }];
+      blocks = [{ from: doc.from, to: doc.to, days: doc.days, slots: doc.slots || {}, fromDoc: true }];
     } else {
       const placed = mod && shiftToGraph(doc, graph.runsOf(doc.group, mod.code));
       if (!placed) {

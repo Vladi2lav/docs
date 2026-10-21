@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/pipeline.test.mjs",
+    "test": "node tests/pipeline.test.mjs && node tests/release-1.1.test.mjs",
     "start": "node server.js"
   },
   "devDependencies": {

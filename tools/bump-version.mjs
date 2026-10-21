@@ -1,4 +1,4 @@
-// Обновляет номер сборки версии сайта перед коммитом:  node tools/bump-version.mjs 1.0.1
+// Обновляет номер сборки версии сайта перед коммитом:  node tools/bump-version.mjs 1.1.0
 // Пишет одно и то же значение в releases/<версия>/src/version.js (код в браузере) и releases/<версия>/version.json
 // (что лежит на сервере). Если они расходятся, страница показывает «Сайт обновлён» и предлагает подтянуть файлы.
 
@@ -7,7 +7,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 const release = process.argv[2];
 const dir = new URL(`../releases/${release}/`, import.meta.url);
 if (!release || !existsSync(dir)) {
-  console.error('Укажите существующую версию: node tools/bump-version.mjs 1.0.1');
+  console.error('Укажите существующую версию: node tools/bump-version.mjs 1.1.0');
   process.exit(1);
 }
 
