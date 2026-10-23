@@ -7,7 +7,12 @@
 //   • ячейка, объединённая на обе колонки, означает «каждую неделю».
 
 const L = 'А-ЯЁӘІҢҒҮҰҚӨҺа-яёәіңғүұқөһA-Za-z';
-const TEACHER = new RegExp(`^[${L}][${L}\\-]+\\s+[${L}]\\.\\s*(?:[${L}]\\.)?$`);
+// Ячейка педагога: «Иванов И.И.», а также «Иванов И.И. 303 ауд.» / «Иванов И.И. Спортивный зал» (фамилия и аудитория в одной ячейке)
+const TEACHER = new RegExp(`^([${L}][${L}\\-]+\\s+[${L}]\\.\\s*(?:[${L}]\\.)?)(?:\\s+(.+))?$`);
+const teacherOf = text => {
+  const m = TEACHER.exec(text);
+  return m && (!m[2] || ROOM.test(m[2]) || /^\d+\b/.test(m[2])) ? m[1].trim() : null;
+};
 const ROOM = /ауд|зал/i;
 const DAYS = [
   ['понедельник', 1], ['вторник', 2], ['среда', 3],
@@ -84,7 +89,8 @@ function readBlock(sheet, block, endRow, group) {
     cols.forEach((c, side) => {
       const text = sheet.get(r, c);
       if (!text) return;
-      if (TEACHER.test(text)) teachers.push({ name: text, side, both: sheet.span(r, c).cols >= 2 });
+      const teacher = teacherOf(text);
+      if (teacher) teachers.push({ name: teacher, side, both: sheet.span(r, c).cols >= 2 });
       else if (!ROOM.test(text) && !subjects[side]) subjects[side] = text;
     });
   }
