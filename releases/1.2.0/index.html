@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Учёт времени педагога — Форма №130</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="topbar">
+    <h1>Учёт времени педагога <span id="channel" class="channel" hidden>альфа</span>
+      <select id="releaseSelect" class="release" title="Версия сайта: стабильная или альфа"></select>
+      <small id="appVersion" class="ver"></small></h1>
+    <div class="fundswitch" id="fundSwitch" title="Учёт ведётся отдельно для грантовых и коммерческих групп (грантовые выделены цветом в графике)">
+      <button type="button" data-fund="grant" class="on">Грант <small></small></button>
+      <button type="button" data-fund="comm">Коммерция <small></small></button>
+    </div>
+    <div class="ws">
+      <button type="button" id="wsBtn" title="Рабочие области">📁 <span id="wsName">Без названия</span> ▾</button>
+      <span id="saveState" class="savestate clean">Нет изменений</span>
+      <button type="button" id="saveBtn" class="primary" title="Ctrl+S">Сохранить</button>
+    </div>
+  </div>
+  <div id="updateBanner" class="update" hidden>
+    Сайт обновлён до версии <b data-version></b>, а у вас открыта старая.
+    <button type="button" id="updateBtn">Обновить страницу</button>
+    <span>Сохраните работу перед обновлением.</span>
+  </div>
+  <nav id="nav">
+    <button type="button" data-tab="sheet" class="on">Ведомость</button>
+    <button type="button" data-tab="plan">Расписание и практики</button>
+    <button type="button" data-tab="graph">График учебного процесса</button>
+    <button type="button" data-tab="calendar">Календарь рабочих дней</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ═════════ Ведомость ═════════ -->
+  <div id="tab-sheet" class="tab">
+    <section class="card">
+      <h2><span>1</span> Исходные документы</h2>
+      <div class="sources" id="sourcesMain"></div>
+      <div class="row">
+        <label class="inline">Учебный год начинается в <input type="number" id="year" min="2000" max="2100" placeholder="2026"></label>
+        <span class="hint">определяется по имени файла графика, иначе укажите вручную</span>
+      </div>
+      <ul id="practiceList" class="list"></ul>
+      <div id="messages"></div>
+    </section>
+
+    <section class="card">
+      <h2><span>2</span> Педагог, семестр, реквизиты</h2>
+      <div class="grid2">
+        <label>Педагог (из расписания) <b class="star">*</b><select id="teacher"><option value="">— загрузите график и расписание —</option></select></label>
+        <label>Семестр <b class="star">*</b>
+          <select id="semester"><option value="0">1 семестр</option><option value="1">2 семестр</option></select>
+          <small id="period" class="hint"></small></label>
+        <label id="prevBox" class="prevbox" hidden>Ведомость 1 семестра (Word) <b class="star">*</b>
+          <input type="file" id="prevFile" accept=".docx">
+          <small id="prevInfo" class="hint">нужна для остатков: выполнено с начала года, план, ФИО, специальность</small></label>
+      </div>
+      <div class="row"><button type="button" id="fillAll" class="primary">Заполнить всё по документам</button>
+        <span class="hint">подставляет только то, что есть в документах</span></div>
+      <div id="fillReport"></div>
+      <div class="grid2">
+        <label>Фамилия, имя, отчество полностью <b class="star">*</b><input id="fullName" placeholder="Иванов Иван Иванович"></label>
+        <label>Заместитель по учебной работе (подпись) <b class="star">*</b><input id="deputy" placeholder="Н. Иванова"></label>
+        <div class="wide field">Специальность (Квалификация) <b class="star">*</b>
+          <div id="specialtyCombo"></div>
+          <input id="specialty" type="hidden">
+          <small class="hint">выберите из списка (из графика и документов практики) или впишите своё; несколько значений ставятся через запятую</small></div>
+        <label class="wide">Колледж (название в кавычках) <b class="star">*</b><input id="college"></label>
+        <label>Отделение <small class="hint">необязательно</small><input id="dept"></label>
+        <label>Комиссия (ЦМК) <small class="hint">необязательно</small><input id="cmk"></label>
+        <label>Должность / категория <small class="hint">необязательно</small><input id="position"></label>
+      </div>
+      <div class="row">
+        <button type="button" id="swapWeeks"></button>
+        <span class="hint">неделя №1 графика берёт колонку расписания, указанную слева; если у вас наоборот — нажмите</span>
+      </div>
+      <div class="row">
+        <label class="inline"><input type="checkbox" id="carry" checked> В последнем месяце 1 семестра помечать остаток «ост на 2 сем»</label>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2><span>3</span> Дисциплины, практика, переносы</h2>
+      <p class="hint">Поля со звёздочкой обязательны, пустые подсвечены красным. Индекс модуля обязателен только для практики.</p>
+      <div class="scroll"><table class="rows" id="rowsTable"><thead><tr>
+        <th>Тип</th><th>Индекс модуля</th><th>Наименование <b class="star">*</b></th><th>Группа <b class="star">*</b></th><th>План, ч <b class="star">*</b></th><th class="s2">С 1 сем., ч <b class="star">*</b></th><th class="ld">Из нагрузки</th><th></th></tr></thead><tbody></tbody></table></div>
+
+      <h3>Практика</h3>
+      <p class="hint">Расписание дней практики по парам, праздники и документ практики — на вкладке «Расписание и практики» или кнопкой «Расширенный вид».</p>
+      <div id="practiceBlocks"></div>
+      <div class="row"><button type="button" id="prAdd">+ Практика</button></div>
+
+      <h3>Переносы и отработки занятий</h3>
+      <div class="row">
+        <select id="trRow"></select>
+        <label class="inline">занятие за <input type="date" id="trFrom"></label>
+        <label class="inline">проведено <input type="date" id="trTo"></label>
+        <label class="inline">часов <input type="number" id="trHours" min="1" value="2" style="width:70px"></label>
+        <button type="button" id="trAdd">Сохранить</button>
+      </div>
+      <ul id="trList" class="list"></ul>
+      <div id="missed"></div>
+    </section>
+
+    <section class="card">
+      <h2><span>4</span> Результат</h2>
+      <div class="row"><button type="button" id="download" class="primary">Скачать Word (.docx)</button></div>
+      <div id="tabs" class="tabs"></div>
+      <div id="preview"><p class="hint">Предпросмотр появится, когда загружены график и расписание и выбран педагог.</p></div>
+    </section>
+  </div>
+
+  <!-- ═════════ Годовой учёт часов (во 2 семестре) ═════════ -->
+  <div id="annualWrap" hidden>
+    <section class="card" id="annualCard">
+      <h2><span>5</span> Годовой учёт часов</h2>
+      <p class="hint">Годовая форма по типам нагрузки: сентябрь–июнь (1 семестр — из загруженной ведомости, 2 семестр — расчёт). Документ можно скачать, когда все поля заполнены.</p>
+      <div class="grid2">
+        <label>ФИО в родительном падеже <b class="star">*</b><input id="fullGen" placeholder="Жаксыбаевой Натальи Николаевны"></label>
+        <label>Колледж в родительном падеже <b class="star">*</b><input id="collegeGen"></label>
+      </div>
+      <div class="scroll"><table class="rows" id="annualTable"><thead><tr>
+        <th>Тип</th><th>Группа</th><th>Наименование</th><th>Нагрузка <b class="star">*</b></th><th>План, ч</th><th>Выполнено, ч</th></tr></thead><tbody></tbody></table></div>
+      <div id="annualNotes"></div>
+      <div class="row"><button type="button" id="annualDownload" class="primary">Скачать годовой учёт (Word)</button></div>
+      <div id="annualMissing" class="hint"></div>
+    </section>
+  </div>
+
+  <!-- ═════════ Расписание и практики ═════════ -->
+  <div id="tab-plan" class="tab" hidden>
+    <section class="card">
+      <h2>Исходные документы</h2>
+      <p class="hint">Те же файлы, что на вкладке «Ведомость»: загрузите здесь или там — они общие.</p>
+      <div class="sources" id="sourcesPlan"></div>
+      <div id="planMessages"></div>
+    </section>
+
+    <section class="card">
+      <h2>Шаблон недели педагога</h2>
+      <div class="grid2">
+        <label>Педагог <select id="planTeacher"><option value="">— загрузите график и расписание —</option></select></label>
+        <div class="field">Группы в таблице
+          <div id="planGroups"></div></div>
+      </div>
+      <div class="row">
+        <label class="inline"><input type="checkbox" id="planOnlyMine"> только пары педагога (иначе — все пары выбранных групп, пары педагога выделены)</label>
+        <label class="inline"><input type="checkbox" id="planShowEmpty"> показывать звонки без занятий</label>
+        <button type="button" id="planMine">Группы педагога</button>
+        <button type="button" id="planSwap"></button>
+      </div>
+      <div id="planGrid"><p class="hint">Загрузите расписание и выберите педагога.</p></div>
+      <div id="planSummary"></div>
+      <details class="bells"><summary>Звонки — нумерация пар для практики</summary>
+        <p class="hint">Пары практики нумеруются по звонкам колледжа: 1-я — самый ранний звонок. Список собран из загруженных расписаний;
+          если загружены не все курсы, поправьте вручную (по строке на звонок, например <code>08:00-09:30</code>).</p>
+        <textarea id="bellsText" rows="7"></textarea>
+        <div class="row"><button type="button" id="bellsAuto">Собрать из расписаний</button><span id="bellsInfo" class="hint"></span></div>
+      </details>
+    </section>
+
+    <section class="card">
+      <h2>Практики педагога</h2>
+      <div id="planPractices"><p class="hint">Выберите педагога.</p></div>
+      <div id="planSuggest"></div>
+      <div class="row"><button type="button" id="planPrAdd">+ Практика</button></div>
+      <div class="grid2" id="signersBox">
+        <label>Заместитель по учебной работе («Утверждаю»)<input id="sgApprover" placeholder="Н.Иванова"></label>
+        <label>Заместитель по учебно-производственной работе<input id="sgUpr" placeholder="А.Петрова"></label>
+        <label>Заведующий учебной частью<input id="sgHead" placeholder="А.Сидорова"></label>
+      </div>
+      <p class="hint">Подписанты попадают в документ практики; подставляются из загруженного документа практики, если они там есть.</p>
+    </section>
+  </div>
+
+  <!-- ═════════ График учебного процесса ═════════ -->
+  <div id="tab-graph" class="tab" hidden>
+    <section class="card">
+      <div class="row">
+        <input id="graphQuery" placeholder="Поиск группы…">
+        <label class="inline"><input type="checkbox" id="graphMine"> только группы выбранного педагога</label>
+      </div>
+      <div id="graphView"><p class="hint">Загрузите график учебного процесса на вкладке «Ведомость».</p></div>
+    </section>
+  </div>
+
+  <!-- ═════════ Календарь рабочих дней ═════════ -->
+  <div id="tab-calendar" class="tab" hidden>
+    <section class="card">
+      <p class="hint"><b>Откуда берутся нерабочие дни:</b> воскресенье (и суббота при пятидневке) + государственные праздники РК из файла
+        <code>data/holidays-kz.json</code> (праздник на выходной переносится на ближайший рабочий день). Официальные переносы, которые каждый год
+        утверждает Правительство, и свои дни добавляйте здесь: клик по дню — сделать нерабочим / рабочим, либо форма переноса ниже.
+        Правки запоминаются в браузере и сразу влияют на ведомость.</p>
+      <div class="row">
+        <button type="button" id="calPrev">◀ −1 год</button>
+        <label class="inline">С месяца <input type="month" id="calStart"></label>
+        <button type="button" id="calNext">+1 год ▶</button>
+        <label class="inline"><input type="checkbox" id="workSat"> Суббота — учебный день</label>
+        <button type="button" id="calExport">Выгрузить календарь</button>
+        <label class="filebtn">Загрузить календарь<input type="file" id="calImport" accept=".json" hidden></label>
+      </div>
+      <div class="row">
+        <b>Перенос дня:</b>
+        <label class="inline">выходной с <input type="date" id="dtFrom"></label>
+        <label class="inline">на <input type="date" id="dtTo"></label>
+        <input id="dtName" placeholder="Название (необязательно)">
+        <button type="button" id="dtAdd">Добавить перенос</button>
+      </div>
+      <ul id="dtList" class="list"></ul>
+      <p class="legend"><i class="weekend"></i> выходной <i class="holiday"></i> праздник <i class="custom"></i> нерабочий (ваша правка) <i class="work-manual"></i> рабочий (ваша правка)</p>
+      <div id="calendarView"></div>
+    </section>
+  </div>
+</main>
+
+<dialog id="prDialog" class="wide"></dialog>
+
+<dialog id="wsDialog">
+  <h2>Рабочие области</h2>
+  <p class="hint">Сохраняют загруженные файлы и все правки. Чтобы продолжить на другом устройстве: «В файл» — и загрузите файл там.</p>
+  <ul id="wsList" class="list"></ul>
+  <div class="row">
+    <button type="button" id="wsNew">Новая область</button>
+    <label class="filebtn">Загрузить из файла<input type="file" id="wsImport" accept=".json" hidden></label>
+    <button type="button" id="wsClose">Закрыть</button>
+  </div>
+</dialog>
+
+<button type="button" id="assistantBtn" class="as-fab" title="Помощник">💬</button>
+<aside id="assistantPanel" class="as-panel" hidden></aside>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
