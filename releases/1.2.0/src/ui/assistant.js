@@ -1,32 +1,18 @@
-// Чат-помощник по этому сайту. Ответы даёт Microsoft Copilot через наш прокси на Vercel (адрес — src/chat-config.js),
+// Чат-помощник по этому сайту. Ответы даёт Google Gemini через наш прокси на Vercel (адрес — src/chat-config.js),
 // ключ хранится в секретах Vercel, пользователь ничего не вводит. Помощник видит краткую сводку о странице (не файлы)
 // и ничего в ведомости не меняет. Что отвечать и на какие темы — задаёт прокси.
 
 import { CHAT } from '../chat-config.js';
 import { esc } from './preview.js';
 
-// Значок Copilot — один раз, в шапке окна чата: видно, чья модель отвечает
-const COPILOT_MARK = `<svg class="as-logo" viewBox="0 0 24 24" aria-hidden="true"><defs>
-  <radialGradient id="cpl-rg1" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="matrix(-9.77 19.84 38.94 15.77 12.67 0.59)">
-    <stop offset=".25" stop-color="#109df2"/><stop offset=".72" stop-color="#aad445"/><stop offset=".97" stop-color="#ffd400"/>
-  </radialGradient>
-  <radialGradient id="cpl-rg2" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="matrix(-9.94 20.80 24.65 12.53 21.95 4.76)">
-    <stop offset=".07" stop-color="#8c48ff"/><stop offset=".5" stop-color="#f2598a"/><stop offset=".9" stop-color="#ffb152"/>
-  </radialGradient>
-  <linearGradient id="cpl-lg1" gradientUnits="userSpaceOnUse" x1="8.275" y1="0.534" x2="8.177" y2="17.776">
-    <stop stop-color="#3dcbff"/><stop offset=".25" stop-color="#0588f7" stop-opacity="0"/>
-  </linearGradient>
-  <linearGradient id="cpl-lg2" gradientUnits="userSpaceOnUse" x1="15.839" y1="5.211" x2="15.829" y2="9.907">
-    <stop offset=".06" stop-color="#f8adfa"/><stop offset=".71" stop-color="#a86edd" stop-opacity="0"/>
-  </linearGradient></defs>
-  <path d="M16.295 5.29l-0.242 0.986h-2.32c-1.721 0-3.22 1.197-3.638 2.902l-2.101 8.593H3.798c-2.44 0-4.229-2.342-3.637-4.761l2.106-8.612c0.557-2.274 2.556-3.87 4.85-3.87h5.54c2.44 0 4.23 2.343 3.638 4.761" fill="url(#cpl-rg1)"/>
-  <path d="M16.295 5.29l-0.242 0.986h-2.32c-1.721 0-3.22 1.197-3.638 2.902l-2.101 8.593H3.798c-2.44 0-4.229-2.342-3.637-4.761l2.106-8.612c0.557-2.274 2.556-3.87 4.85-3.87h5.54c2.44 0 4.23 2.343 3.638 4.761" fill="url(#cpl-lg1)"/>
-  <path d="M7.752 18.758l0.242-0.986h2.321c1.72 0 3.22-1.197 3.637-2.903l2.102-8.593h4.196c2.439 0 4.228 2.343 3.637 4.762l-2.107 8.611c-0.556 2.274-2.555 3.87-4.85 3.87h-5.54c-2.44 0-4.229-2.342-3.638-4.761" fill="url(#cpl-rg2)"/>
-  <path d="M7.752 18.758l0.242-0.986h2.321c1.72 0 3.22-1.197 3.637-2.903l2.102-8.593h4.196c2.439 0 4.228 2.343 3.637 4.762l-2.107 8.611c-0.556 2.274-2.555 3.87-4.85 3.87h-5.54c-2.44 0-4.229-2.342-3.638-4.761" fill="url(#cpl-lg2)"/></svg>`;
+// Значок Gemini — один раз, в шапке окна чата: видно, чья модель отвечает
+const GEMINI_MARK = `<svg class="as-logo" viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="gmg" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#4285f4"/><stop offset=".5" stop-color="#9b72cb"/><stop offset="1" stop-color="#d96570"/></linearGradient></defs>
+  <path fill="url(#gmg)" d="M12 0C12 6.6 17.4 12 24 12C17.4 12 12 17.4 12 24C12 17.4 6.6 12 0 12C6.6 12 12 6.6 12 0Z"/></svg>`;
 
 export function initAssistant({ button, panel, getContext }) {
   const history = [];
-  panel.innerHTML = `<div class="as-head">${COPILOT_MARK}<b>Copilot</b> <small>на базе Microsoft Copilot · только по этому сайту</small>
+  panel.innerHTML = `<div class="as-head">${GEMINI_MARK}<b>Помощник</b> <small>на базе Google Gemini · только по этому сайту</small>
       <button type="button" data-a="close" title="Закрыть">✕</button></div>
     <div class="as-log"><div class="as-msg bot">${CHAT.proxy
       ? 'Здравствуйте! Спрашивайте о работе с ведомостью: «почему в октябре нет пар?», «что ещё не заполнено?», «как добавить практику?».'

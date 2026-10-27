@@ -48,18 +48,26 @@ export default async function handler(req, res) {
   if (!messages.length || messages[messages.length - 1].role !== 'user') return res.status(400).json({ error: 'Нет вопроса' });
   if (JSON.stringify(messages).length > MAX_CHARS) return res.status(413).json({ error: 'Слишком длинная переписка' });
 
-  const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-  const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: `${SYSTEM}\n\nСостояние страницы:\n${context}` }] },
-      contents: messages,
-      generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
-    }),
+  // У каждой модели свой лимит запросов в минуту: упёрлись в лимит (429), ошибка или долго — пробуем следующую
+  const models = (process.env.GEMINI_MODELS || 'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-flash-lite-latest').split(',').map(s => s.trim()).filter(Boolean);
+  const payload = JSON.stringify({
+    systemInstruction: { parts: [{ text: `${SYSTEM}\n\nСостояние страницы:\n${context}` }] },
+    contents: messages,
+    generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
   });
-  if (!upstream.ok) return res.status(upstream.status === 429 ? 429 : 502).json({ error: `Gemini: ${upstream.status}` });
-  const data = await upstream.json();
-  const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
-  return res.status(200).json({ text });
+  let lastStatus = 502;
+  for (const model of models) {
+    try {
+      const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST', signal: AbortSignal.timeout(20000),
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+        body: payload,
+      });
+      if (!upstream.ok) { lastStatus = upstream.status; continue; }
+      const data = await upstream.json();
+      const text = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+      if (text) return res.status(200).json({ text, model });
+    } catch { lastStatus = 504; }
+  }
+  return res.status(lastStatus === 429 ? 429 : 502).json({ error: `Gemini: ${lastStatus}` });
 }
