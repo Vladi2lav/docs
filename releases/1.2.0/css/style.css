@@ -201,3 +201,5 @@ dialog .ok { color: #15803d; } dialog .warn { color: var(--warn); }
 .as-msg.err { background: #fef2f2; color: var(--err); }
 .as-form { display: flex; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--line); }
 .as-form input { flex: 1; }
+.as-logo { width: 22px; height: 22px; flex: none; }
+.as-head b { white-space: nowrap; }

@@ -76,4 +76,10 @@ _legacy/              прежняя версия — можно удалить
 Добавить новый источник — новый парсер в `parsers/`, возвращающий простой объект.
 
 ## 1.2 (альфа)
-Чат-помощник (кнопка внизу справа) на GitHub Models: токен GitHub с правом Models: read вводится в настройках и хранится только в браузере; адрес API можно заменить на свой прокси.
+Чат-помощник (кнопка 💬 внизу справа) на Google Gemini: отвечает только по этому сайту, пользователь ничего не вводит.
+Сайт обращается к функции `chat-proxy/api/chat.js` на Vercel, ключ Gemini лежит только в её секретах.
+
+Подключение (один раз):
+1. Vercel → Add New Project → этот репозиторий, **Root Directory: `chat-proxy`**, Framework: Other.
+2. Settings → Environment Variables: `GEMINI_API_KEY` = ключ; `ALLOWED_ORIGINS` = адрес сайта на Render (например `https://docs-xxxx.onrender.com`). Redeploy.
+3. Адрес функции (`https://<проект>.vercel.app/api/chat`) вписать в `releases/1.2.0/src/chat-config.js` → `proxy`.
