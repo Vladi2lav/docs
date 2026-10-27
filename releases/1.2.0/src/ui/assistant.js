@@ -26,7 +26,7 @@ const COPILOT_MARK = `<svg class="as-logo" viewBox="0 0 24 24" aria-hidden="true
 
 export function initAssistant({ button, panel, getContext }) {
   const history = [];
-  panel.innerHTML = `<div class="as-head">${COPILOT_MARK}<b>Copilot</b> <small>на базе Microsoft Copilot · только по этому сайту</small>
+  panel.innerHTML = `<div class="as-head">${COPILOT_MARK}<b>Copilot</b> <small>на базе Microsoft Copilot</small>
       <button type="button" data-a="close" title="Закрыть">✕</button></div>
     <div class="as-log"><div class="as-msg bot">${CHAT.proxy
       ? 'Здравствуйте! Спрашивайте о работе с ведомостью: «почему в октябре нет пар?», «что ещё не заполнено?», «как добавить практику?».'
